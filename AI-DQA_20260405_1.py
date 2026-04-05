@@ -11,20 +11,34 @@ import openai
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# ================== 初始化 Session State 和数据库 ==================
+# ================== 初始化 Session State ==================
+if "lang" not in st.session_state:
+    st.session_state.lang = "zh"
+if "admin_logged_in" not in st.session_state:
+    st.session_state.admin_logged_in = False
+if "knowledge_db" not in st.session_state:
+    st.session_state.knowledge_db = {}
+if "product_risks_db" not in st.session_state:
+    st.session_state.product_risks_db = {}
+
+# LLM 临时覆盖配置（不写入 secrets）
+if "temp_api_key" not in st.session_state:
+    st.session_state.temp_api_key = ""
+if "temp_base_url" not in st.session_state:
+    st.session_state.temp_base_url = "https://api.deepseek.com"
+if "temp_model" not in st.session_state:
+    st.session_state.temp_model = "deepseek-chat"
+
+# ================== 数据库初始化 ==================
 def init_db():
-    """初始化 SQLite 数据库，创建表结构（如果不存在）"""
     conn = sqlite3.connect('app_data.db')
     c = conn.cursor()
-    # 创建知识库表
     c.execute('''CREATE TABLE IF NOT EXISTS knowledge_base
                  (category TEXT, content TEXT)''')
-    # 创建产品风险表
     c.execute('''CREATE TABLE IF NOT EXISTS product_risks
                  (product_type TEXT, module TEXT, failure_mode TEXT, cause TEXT,
                   severity INTEGER, occurrence INTEGER, detection INTEGER,
                   mitigation TEXT)''')
-    # 创建用户分析记录表（可选）
     c.execute('''CREATE TABLE IF NOT EXISTS analysis_history
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   product_name TEXT, product_desc TEXT, report TEXT,
@@ -33,7 +47,6 @@ def init_db():
     conn.close()
 
 def load_knowledge_from_db():
-    """从数据库加载知识库"""
     conn = sqlite3.connect('app_data.db')
     c = conn.cursor()
     c.execute("SELECT category, content FROM knowledge_base")
@@ -46,7 +59,6 @@ def load_knowledge_from_db():
     return knowledge
 
 def save_knowledge_to_db(category, content):
-    """保存单条知识库条目到数据库"""
     conn = sqlite3.connect('app_data.db')
     c = conn.cursor()
     c.execute("INSERT INTO knowledge_base (category, content) VALUES (?, ?)", (category, content))
@@ -54,7 +66,6 @@ def save_knowledge_to_db(category, content):
     conn.close()
 
 def delete_knowledge_from_db(category, content):
-    """从数据库删除知识库条目"""
     conn = sqlite3.connect('app_data.db')
     c = conn.cursor()
     c.execute("DELETE FROM knowledge_base WHERE category = ? AND content = ?", (category, content))
@@ -62,7 +73,6 @@ def delete_knowledge_from_db(category, content):
     conn.close()
 
 def clear_knowledge_category(category):
-    """清空指定分类的所有知识库条目"""
     conn = sqlite3.connect('app_data.db')
     c = conn.cursor()
     c.execute("DELETE FROM knowledge_base WHERE category = ?", (category,))
@@ -70,7 +80,6 @@ def clear_knowledge_category(category):
     conn.close()
 
 def load_product_risks_from_db():
-    """从数据库加载产品风险数据"""
     conn = sqlite3.connect('app_data.db')
     c = conn.cursor()
     c.execute("SELECT product_type, module, failure_mode, cause, severity, occurrence, detection, mitigation FROM product_risks")
@@ -93,7 +102,6 @@ def load_product_risks_from_db():
     return risks
 
 def insert_product_risk(product_type, module, failure_mode, cause, severity, occurrence, detection, mitigation):
-    """插入产品风险数据"""
     conn = sqlite3.connect('app_data.db')
     c = conn.cursor()
     c.execute('''INSERT INTO product_risks (product_type, module, failure_mode, cause, severity, occurrence, detection, mitigation)
@@ -102,16 +110,12 @@ def insert_product_risk(product_type, module, failure_mode, cause, severity, occ
     conn.commit()
     conn.close()
 
-# 初始化数据库和 session_state
 init_db()
 
-if "lang" not in st.session_state:
-    st.session_state.lang = "zh"
-if "admin_logged_in" not in st.session_state:
-    st.session_state.admin_logged_in = False
-if "knowledge_db" not in st.session_state:
+# 加载数据到 session_state
+if not st.session_state.knowledge_db:
     st.session_state.knowledge_db = load_knowledge_from_db()
-if "product_risks_db" not in st.session_state:
+if not st.session_state.product_risks_db:
     st.session_state.product_risks_db = load_product_risks_from_db()
 
 # ================== 管理员凭证 ==================
@@ -119,25 +123,31 @@ ADMIN_USERNAME = "Laurence_ku"
 ADMIN_PASSWORD = "Ku_product$2026"
 
 # ================== DeepSeek AI 分析 ==================
+def get_openai_client():
+    """获取 OpenAI 客户端，优先使用临时覆盖的配置，否则从 secrets 读取"""
+    api_key = st.session_state.temp_api_key if st.session_state.temp_api_key else st.secrets.get("DEEPSEEK_API_KEY", "")
+    base_url = st.session_state.temp_base_url if st.session_state.temp_base_url else st.secrets.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    if not api_key:
+        return None, "未配置 API Key"
+    return openai.OpenAI(api_key=api_key, base_url=base_url), None
+
 def call_deepseek(prompt: str) -> str:
-    """调用 DeepSeek API 生成报告"""
+    client, error = get_openai_client()
+    if error:
+        return f"AI 分析失败: {error}"
     try:
-        client = openai.OpenAI(
-            api_key=st.secrets["DEEPSEEK_API_KEY"],
-            base_url=st.secrets.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-        )
+        model = st.session_state.temp_model if st.session_state.temp_model else st.secrets.get("DEEPSEEK_MODEL", "deepseek-chat")
         response = client.chat.completions.create(
-            model=st.secrets.get("DEEPSEEK_MODEL", "deepseek-chat"),
+            model=model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
             max_tokens=4000
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"AI 分析失败: {str(e)}。请检查 API 配置。"
+        return f"AI 分析失败: {str(e)}"
 
 def generate_ai_analysis(product_name: str, product_desc: str) -> str:
-    """构建 prompt 并调用 AI 生成报告"""
     prompt = f"""
 你是一位拥有25年经验的资深产品可靠性工程师。
 请对以下产品进行风险分析，并以中文输出结果。
@@ -149,28 +159,20 @@ def generate_ai_analysis(product_name: str, product_desc: str) -> str:
 
 ### 1. 产品分解
 *   **功能件**: [根据产品描述推测其主要功能模块，如光学、电气、热学、机械、控制等]
-*   **主要模块**: [列出3-5个核心模块，如LED光源、驱动电源、散热器、PCBA、传感器等]
+*   **主要模块**: [列出3-5个核心模块]
 
 ### 2. Top 5 潜在风险
 | 模块 | 失效模式 | 潜在原因 | 严重度(1-10) | 发生度(1-10) | 探测度(1-10) | RPN |
 |------|----------|----------|--------------|--------------|--------------|-----|
-| [模块名称] | [失效模式] | [潜在原因] | [数字] | [数字] | [数字] | [乘积] |
-... (共5行)
+| ... | ... | ... | ... | ... | ... | ... |
 
 ### 3. 关键风险缓解策略
-针对RPN最高的前3项风险，提供具体的设计建议：
-*   **[风险1]**: [提供1-2句具体的解决方案，如选用更高规格的元件、优化散热结构等]
-*   **[风险2]**: [提供1-2句具体的解决方案]
-*   **[风险3]**: [提供1-2句具体的解决方案]
-
-请确保分析结果专业、具体、可执行。
+针对RPN最高的前3项风险，提供具体的设计建议。
 """
     return call_deepseek(prompt)
 
 # ================== 辅助函数 ==================
 def generate_mitigation_strategy(risk_item: Dict) -> str:
-    """基于知识库生成缓解策略"""
-    # 这里可以增强逻辑，从 knowledge_db 中检索相关内容
     base_mitigation = risk_item.get("mitigation", "建议参考行业规范和设计指南进行优化。")
     strategy = f"""
 针对 **{risk_item['module']}** 的 **{risk_item['failure_mode']}** 问题，建议如下策略：
@@ -200,38 +202,46 @@ def admin_settings_dialog():
         return
 
     st.success("管理员已登录")
+    
+    # ===== 1. 经验知识库管理 =====
     st.markdown("## 📚 经验知识库管理")
     categories = ["光学", "机械", "热学", "电气", "控制"]
     selected_cat = st.selectbox("选择分类", categories)
-
-    # 显示现有条目
-    st.markdown(f"**{selected_cat} 分类现有条目：**")
+    
+    # 显示该分类下的所有条目（带滚动和条目数控制）
     items = st.session_state.knowledge_db.get(selected_cat, [])
+    st.markdown(f"**{selected_cat} 分类现有条目（共 {len(items)} 条）：**")
+    
+    # 设置每页显示数量
+    page_size = st.slider("每页显示条目数", min_value=5, max_value=50, value=10, step=5)
     if items:
-        for idx, item in enumerate(items):
-            col1, col2 = st.columns([10, 1])
-            with col1:
-                st.write(f"{idx+1}. {item}")
-            with col2:
-                if st.button("❌", key=f"del_{selected_cat}_{idx}"):
-                    delete_knowledge_from_db(selected_cat, item)
-                    st.session_state.knowledge_db = load_knowledge_from_db()
-                    st.rerun()
+        for idx in range(0, len(items), page_size):
+            for i, item in enumerate(items[idx:idx+page_size], start=idx+1):
+                col1, col2 = st.columns([10, 1])
+                with col1:
+                    st.write(f"{i}. {item}")
+                with col2:
+                    if st.button("❌", key=f"del_{selected_cat}_{i}"):
+                        delete_knowledge_from_db(selected_cat, item)
+                        st.session_state.knowledge_db = load_knowledge_from_db()
+                        st.rerun()
+            st.markdown("---")
     else:
         st.info("暂无条目")
-
+    
     # 添加新条目
-    new_item = st.text_area(f"添加新经验教训", height=100, placeholder="例如：LED路灯防水结构必须采用双重密封设计，避免IP等级虚标。")
+    new_item = st.text_area(f"添加新经验教训", height=100, placeholder="例如：LED路灯防水结构必须采用双重密封设计。")
     if st.button("添加条目"):
         if new_item.strip():
             save_knowledge_to_db(selected_cat, new_item.strip())
             st.session_state.knowledge_db = load_knowledge_from_db()
             st.success("已添加")
             st.rerun()
-
+    
     st.markdown("---")
+    
+    # ===== 2. Excel 导入导出 =====
     st.subheader("📥 导出/导入知识库（Excel）")
-    # 导出功能
     if st.button("下载知识库模板 (Excel)"):
         export_data = {}
         for cat in categories:
@@ -247,17 +257,14 @@ def admin_settings_dialog():
             file_name=f"knowledge_base_{datetime.now().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
-    # 上传功能
+    
     uploaded_file = st.file_uploader("上传 Excel 文件（覆盖现有知识库）", type=["xlsx"])
     if uploaded_file is not None:
         try:
             df_upload = pd.read_excel(uploaded_file, sheet_name="知识库")
             if all(cat in df_upload.columns for cat in categories):
-                # 清空现有数据
                 for cat in categories:
                     clear_knowledge_category(cat)
-                # 导入新数据
                 for cat in categories:
                     cell_value = df_upload[cat].iloc[0] if not df_upload[cat].isna().iloc[0] else ""
                     if isinstance(cell_value, str) and cell_value.strip():
@@ -271,18 +278,46 @@ def admin_settings_dialog():
                 st.error("Excel 文件列名不正确，请使用下载的模板格式。")
         except Exception as e:
             st.error(f"读取文件失败：{e}")
-
-    # 风险数据初始化（预置数据）
+    
     st.markdown("---")
+    
+    # ===== 3. LLM API 临时配置 =====
+    st.subheader("⚙️ LLM API 临时配置（仅当前会话有效）")
+    st.caption("此处修改仅对本会话生效，不会写入云端 Secrets。刷新页面后恢复。")
+    new_api_key = st.text_input("DeepSeek API Key", value=st.session_state.temp_api_key, type="password")
+    new_base_url = st.text_input("Base URL", value=st.session_state.temp_base_url)
+    new_model = st.text_input("Model", value=st.session_state.temp_model)
+    if st.button("应用临时配置"):
+        st.session_state.temp_api_key = new_api_key
+        st.session_state.temp_base_url = new_base_url
+        st.session_state.temp_model = new_model
+        st.success("已应用，后续 AI 调用将使用此配置。")
+        st.rerun()
+    
+    st.markdown("---")
+    
+    # ===== 4. 数据库连接状态 =====
+    st.subheader("🗄️ 数据库连接状态")
+    # 获取知识库各分类条目数
+    kb_counts = {cat: len(st.session_state.knowledge_db.get(cat, [])) for cat in categories}
+    # 获取产品风险表产品类型数量
+    product_types = set(st.session_state.product_risks_db.keys())
+    st.json({
+        "当前数据库": "SQLite (app_data.db)",
+        "知识库分类统计": kb_counts,
+        "已加载产品类型": list(product_types),
+        "风险记录总数": sum(len(risks) for risks in st.session_state.product_risks_db.values())
+    })
+    
+    st.markdown("---")
+    
+    # ===== 5. 一键加载基础风险数据 =====
     st.subheader("⚙️ 初始化基础风险数据")
     if st.button("一键加载基础风险数据"):
         # LED 灯具
         insert_product_risk("LED路灯", "LED光源", "光衰过快", "结温过高", 8, 7, 5, "优化散热设计，选用优质灯珠")
         insert_product_risk("LED路灯", "驱动电源", "电容鼓包", "高温/纹波大", 9, 6, 6, "选用长寿命电容，降低纹波")
         insert_product_risk("LED路灯", "防水结构", "进水短路", "密封圈老化", 9, 4, 7, "双重密封，IP68测试")
-        insert_product_risk("LED吸顶灯", "LED灯珠", "单颗死灯", "静电击穿/过流", 7, 5, 6, "ESD防护，恒流驱动")
-        insert_product_risk("LED吸顶灯", "驱动电源", "频闪", "纹波过大/电路设计", 6, 6, 5, "增加输出滤波，满足IEEE 1789")
-        insert_product_risk("LED吸顶灯", "弹簧卡扣", "断裂导致掉落", "金属疲劳/材料脆性", 8, 3, 4, "选用弹簧钢，疲劳测试")
         # 洗地机
         insert_product_risk("洗地机", "滚刷电机", "堵转烧毁", "毛发缠绕/异物卡滞", 8, 7, 6, "过流保护+防缠绕结构")
         insert_product_risk("洗地机", "水泵", "不出水/流量小", "堵塞/膜片老化", 7, 6, 5, "滤网+自清洁模式")
@@ -290,16 +325,13 @@ def admin_settings_dialog():
         # 吸尘器
         insert_product_risk("吸尘器", "电机", "吸力下降/异响", "滤网堵塞/轴承磨损", 7, 6, 5, "定期清理滤网，更换轴承")
         insert_product_risk("吸尘器", "电池", "续航不足/无法充电", "电芯老化/充电电路故障", 7, 6, 5, "使用原装充电器，避免过放")
-        insert_product_risk("吸尘器", "尘盒密封", "漏尘", "密封圈老化/安装不到位", 5, 4, 3, "定期检查密封圈")
         # 宠物饮水机
         insert_product_risk("宠物饮水机", "水泵", "不出水/噪音大", "堵塞/叶轮磨损", 7, 6, 5, "定期清洗，更换水泵")
         insert_product_risk("宠物饮水机", "水位传感器", "误报缺水/溢水", "脏污/元件老化", 6, 5, 4, "定期清洁传感器")
-        insert_product_risk("宠物饮水机", "密封圈", "漏水", "老化/破损", 8, 4, 6, "定期更换密封圈")
         # 宠物喂食器
         insert_product_risk("宠物喂食器", "出粮机构", "卡粮/不出粮", "粮食受潮/电机故障", 8, 5, 6, "保持粮食干燥，定期清理")
         insert_product_risk("宠物喂食器", "控制板", "程序异常/无法连接", "固件bug/网络问题", 7, 4, 5, "升级固件，检查网络")
-        insert_product_risk("宠物喂食器", "电池", "断电后无备份", "电池老化/未安装", 6, 3, 4, "定期检查备用电池")
-        # 刷新 session_state
+        
         st.session_state.product_risks_db = load_product_risks_from_db()
         st.success("基础风险数据已加载！")
         st.rerun()
@@ -350,6 +382,8 @@ TEXTS = {
         "back_btn": "← 返回重新填写",
         "footer": "© 2026 Laurence Ku | AI+DQA 风险分析 | 基于25年研发经验",
         "no_risks": "未检索到风险数据，请检查产品类型或先加载基础数据。",
+        "db_status": "数据库状态",
+        "db_connected": "✅ SQLite 已连接",
     },
     "en": {
         "title": "🔍 AI+DQA Product Risk Analysis",
@@ -381,6 +415,8 @@ TEXTS = {
         "back_btn": "← Back",
         "footer": "© 2026 Laurence Ku | AI+DQA Risk Analysis | 25+ years R&D",
         "no_risks": "No risk data found. Please check product type or load base data first.",
+        "db_status": "Database Status",
+        "db_connected": "✅ SQLite Connected",
     }
 }
 
@@ -389,7 +425,7 @@ t = TEXTS[lang]
 
 st.title(t["title"])
 
-# ================== 侧边栏（精简版） ==================
+# ================== 侧边栏（显示状态） ==================
 with st.sidebar:
     st.markdown(f"## {t['sidebar_title']}")
     st.markdown(t["sidebar_basis"])
@@ -403,11 +439,28 @@ with st.sidebar:
         if analyst_title:
             st.markdown(f"_{analyst_title}_")
     st.markdown("---")
+    
+    # API 状态显示
     st.markdown(f"**{t['api_status']}**")
-    if "DEEPSEEK_API_KEY" in st.secrets and st.secrets["DEEPSEEK_API_KEY"]:
+    # 检查是否有可用的 API Key（临时或 secrets）
+    has_api = bool(st.session_state.temp_api_key or st.secrets.get("DEEPSEEK_API_KEY"))
+    if has_api:
         st.success(t["api_configured"])
+        # 显示当前使用的模型
+        current_model = st.session_state.temp_model if st.session_state.temp_model else st.secrets.get("DEEPSEEK_MODEL", "deepseek-chat")
+        st.caption(f"当前模型: {current_model}")
     else:
         st.error(t["api_not_configured"])
+    
+    st.markdown("---")
+    # 数据库状态显示
+    st.markdown(f"**{t['db_status']}**")
+    st.success(t["db_connected"])
+    # 显示知识库条目总数
+    total_entries = sum(len(v) for v in st.session_state.knowledge_db.values())
+    st.caption(f"知识库条目: {total_entries}")
+    st.caption(f"风险记录: {sum(len(risks) for risks in st.session_state.product_risks_db.values())}")
+    
     st.markdown("---")
     st.markdown(t["contact_info"])
 
@@ -436,7 +489,6 @@ if ai_analyze or quick_analyze:
                 st.markdown(ai_report)
         else:
             # 快速分析：基于本地数据库
-            # 简单的产品类型匹配
             product_type = "default"
             if any(keyword in product_name for keyword in ["路灯", "吸顶灯", "筒灯"]):
                 product_type = "LED路灯" if "路灯" in product_name else "LED吸顶灯"
@@ -452,7 +504,6 @@ if ai_analyze or quick_analyze:
             risks = st.session_state.product_risks_db.get(product_type, [])
             if risks:
                 st.subheader(t["decomposition_title"])
-                # 简单模拟分解结果
                 col_a, col_b, col_c = st.columns(3)
                 col_a.metric("产品", product_name)
                 col_b.metric("功能件", "待分析")
