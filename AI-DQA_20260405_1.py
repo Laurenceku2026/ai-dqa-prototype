@@ -8,7 +8,7 @@ import re
 from io import BytesIO
 from datetime import datetime
 from typing import Dict, List, Optional
-from duckduckgo_search import DDGS  # 需要安装 duckduckgo-search
+from duckduckgo_search import DDGS
 
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
@@ -41,19 +41,15 @@ if "temp_model" not in st.session_state:
 def init_db():
     conn = sqlite3.connect('app_data.db')
     c = conn.cursor()
-    # 用户知识库
     c.execute('''CREATE TABLE IF NOT EXISTS knowledge_base
                  (category TEXT, content TEXT)''')
-    # 内置产品风险库（用户可编辑）
     c.execute('''CREATE TABLE IF NOT EXISTS product_risks
                  (product_type TEXT, module TEXT, failure_mode TEXT, cause TEXT,
                   severity INTEGER, occurrence INTEGER, detection INTEGER,
                   mitigation TEXT)''')
-    # 行业标准风险库（预设）
     c.execute('''CREATE TABLE IF NOT EXISTS industry_risks
                  (category TEXT, product_type TEXT, failure_mode TEXT, cause TEXT,
                   mitigation TEXT, source TEXT)''')
-    # 分析历史
     c.execute('''CREATE TABLE IF NOT EXISTS analysis_history
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   product_name TEXT, product_desc TEXT, report TEXT,
@@ -144,29 +140,23 @@ def load_industry_risks_from_db():
     return risks
 
 def init_industry_risks():
-    """预设行业风险数据（LED灯具、洗地机、吸尘器、宠物电器等）"""
     industry_data = [
-        # LED灯具
         ("LED", "LED路灯", "光衰过快", "结温过高", "优化散热设计，选用优质灯珠", "IEC 62031"),
         ("LED", "LED路灯", "浪涌损坏", "雷击或电网波动", "加装SPD，做好接地", "IEC 61643-11"),
         ("LED", "LED吸顶灯", "频闪", "驱动电源纹波过大", "增加输出滤波，满足IEEE 1789", "IEEE 1789"),
         ("LED", "LED筒灯", "死灯", "静电击穿/过流", "ESD防护，恒流驱动", "ANSI/ESD S20.20"),
-        # 洗地机
         ("清洁电器", "洗地机", "滚刷堵转", "毛发缠绕", "防缠绕结构+过流保护", "行业最佳实践"),
         ("清洁电器", "洗地机", "电池续航衰减", "电芯老化/BMS不均衡", "选用A品电芯，均衡充电", "GB 31241"),
-        # 吸尘器
         ("清洁电器", "吸尘器", "吸力下降", "滤网堵塞", "定期清理提示，HEPA滤网", "IEC 60312-1"),
         ("清洁电器", "吸尘器", "电机过热", "风道堵塞", "堵塞报警，优化风道", "UL 1017"),
-        # 宠物饮水机
         ("宠物电器", "宠物饮水机", "水泵噪音大", "叶轮磨损/异物", "无刷水泵，易拆洗", "行业标准"),
         ("宠物电器", "宠物饮水机", "水位误报", "传感器脏污", "双传感器冗余", "IPX7防水"),
-        # 宠物喂食器
         ("宠物电器", "宠物喂食器", "卡粮", "粮食受潮", "干燥剂+防潮设计", "行业最佳实践"),
         ("宠物电器", "宠物喂食器", "APP连接失败", "WiFi信号/固件bug", "双频WiFi，OTA升级", "IEEE 802.11"),
     ]
     conn = sqlite3.connect('app_data.db')
     c = conn.cursor()
-    c.execute("DELETE FROM industry_risks")  # 清空旧数据
+    c.execute("DELETE FROM industry_risks")
     for row in industry_data:
         c.execute("INSERT INTO industry_risks (category, product_type, failure_mode, cause, mitigation, source) VALUES (?,?,?,?,?,?)", row)
     conn.commit()
@@ -232,7 +222,6 @@ def translate_text(text: str, target_lang: str) -> str:
 
 # ================== 联网搜索 ==================
 def web_search(query: str, max_results=3) -> str:
-    """使用 DuckDuckGo 免费搜索，返回文本摘要"""
     try:
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=max_results))
@@ -266,7 +255,6 @@ def retrieve_knowledge_context(product_name: str, product_desc: str, limit=5) ->
     return "\n".join(top)
 
 def get_internal_risks(product_name: str) -> str:
-    """从 product_risks 表中检索相关风险"""
     matched = []
     for ptype, risks in st.session_state.product_risks_db.items():
         if any(k in product_name for k in ptype.split()):
@@ -278,7 +266,6 @@ def get_internal_risks(product_name: str) -> str:
     return "\n".join(matched)
 
 def get_industry_risks(product_name: str) -> str:
-    """从 industry_risks 表中检索相关行业风险"""
     matched = []
     for risk in st.session_state.industry_risks_db:
         if risk['product_type'] in product_name or any(k in product_name for k in risk['product_type'].split()):
@@ -287,7 +274,7 @@ def get_industry_risks(product_name: str) -> str:
         return "无匹配的行业风险记录。"
     return "\n".join(matched[:5])
 
-# ================== AI 分析（融合多数据源） ==================
+# ================== AI 分析 ==================
 def generate_ai_analysis(product_name: str, product_desc: str, enable_web: bool) -> str:
     user_kb = retrieve_knowledge_context(product_name, product_desc)
     internal_risks = get_internal_risks(product_name)
@@ -335,7 +322,7 @@ def generate_ai_analysis(product_name: str, product_desc: str, enable_web: bool)
 """
     return call_deepseek(prompt, max_tokens=4000)
 
-# ================== 辅助函数（快速分析） ==================
+# ================== 辅助函数 ==================
 def generate_mitigation_strategy(risk_item: Dict) -> str:
     base = risk_item.get("mitigation", "建议参考行业规范和设计指南。")
     return f"""
@@ -436,7 +423,7 @@ def admin_settings_dialog():
     uploaded_file = st.file_uploader("上传 Excel 文件（覆盖现有知识库）", type=["xlsx"])
     if uploaded_file is not None:
         try:
-            df_upload = pd.read_excel(uploaded_file, sheet_name="知识库")
+            df_upload = pd.read_excel(uploaded_file, sheet_name="知识库", header=0)
             column_mapping = {
                 "光学": ["光学", "光学 / Optical", "Optical"],
                 "机械": ["机械", "机械 / Mechanical", "Mechanical"],
@@ -455,13 +442,14 @@ def admin_settings_dialog():
                 for cat_key in column_mapping.keys():
                     clear_knowledge_category(cat_key)
                 for cat_key, col_name in actual_columns.items():
-                    cell_value = df_upload[col_name].iloc[0] if not df_upload[col_name].isna().iloc[0] else ""
-                    if isinstance(cell_value, str) and cell_value.strip():
-                        items_list = [line.strip() for line in cell_value.split("\n") if line.strip()]
-                        for item in items_list:
-                            save_knowledge_to_db(cat_key, item)
+                    # 读取该列从第2行开始的所有非空值（每行一条经验）
+                    items = df_upload[col_name].dropna().astype(str).tolist()
+                    items = [item.strip() for item in items if item.strip() and item.strip().lower() != 'nan']
+                    for item in items:
+                        save_knowledge_to_db(cat_key, item)
                 st.session_state.knowledge_db = load_knowledge_from_db()
-                st.success(f"知识库已更新！共导入 {sum(len(st.session_state.knowledge_db[cat]) for cat in column_mapping)} 条记录。")
+                total = sum(len(st.session_state.knowledge_db[cat]) for cat in column_mapping)
+                st.success(f"知识库已更新！共导入 {total} 条记录。")
                 st.rerun()
             else:
                 missing = [k for k in column_mapping if k not in actual_columns]
@@ -497,25 +485,19 @@ def admin_settings_dialog():
     })
 
     st.markdown("---")
-    # 一键加载基础风险数据（内部 product_risks）
+    # 一键加载基础风险数据
     st.subheader("⚙️ 初始化内置风险数据")
     if st.button("一键加载内置风险数据"):
-        # 清空现有 product_risks 并插入预置数据
         conn = sqlite3.connect('app_data.db')
         c = conn.cursor()
         c.execute("DELETE FROM product_risks")
-        # LED 灯具
         insert_product_risk("LED路灯", "LED光源", "光衰过快", "结温过高", 8,7,5,"优化散热")
         insert_product_risk("LED路灯", "驱动电源", "电容鼓包", "高温/纹波大",9,6,6,"选用长寿命电容")
         insert_product_risk("LED吸顶灯", "LED灯珠", "单颗死灯", "静电击穿",7,5,6,"ESD防护")
-        # 洗地机
         insert_product_risk("洗地机", "滚刷电机", "堵转烧毁", "毛发缠绕",8,7,6,"过流保护")
         insert_product_risk("洗地机", "水泵", "不出水", "堵塞",7,6,5,"滤网+自清洁")
-        # 吸尘器
         insert_product_risk("吸尘器", "电机", "吸力下降", "滤网堵塞",7,6,5,"定期清理")
-        # 宠物饮水机
         insert_product_risk("宠物饮水机", "水泵", "噪音大", "叶轮磨损",6,5,4,"无刷电机")
-        # 宠物喂食器
         insert_product_risk("宠物喂食器", "出粮机构", "卡粮", "粮食受潮",8,5,6,"干燥剂")
         conn.commit()
         conn.close()
@@ -663,7 +645,6 @@ if ai_analyze or quick_analyze:
                 st.markdown("### 🤖 AI 生成的风险分析报告")
                 st.markdown(report)
         else:
-            # 快速分析：基于内置 product_risks + 知识库检索
             product_type = "default"
             if any(k in product_name for k in ["路灯", "吸顶灯", "筒灯"]):
                 product_type = "LED路灯" if "路灯" in product_name else "LED吸顶灯"
@@ -693,7 +674,6 @@ if ai_analyze or quick_analyze:
                 st.subheader(t["strategy_title"])
                 for idx, risk in df.iterrows():
                     with st.expander(f"{idx+1}. {risk['module']} - {risk['failure_mode']} (RPN={risk['RPN']})"):
-                        # 从用户知识库中检索相关条目并翻译
                         related = []
                         for cat, entries in st.session_state.knowledge_db.items():
                             for entry in entries:
@@ -704,7 +684,6 @@ if ai_analyze or quick_analyze:
                             st.markdown("**📚 用户知识库相关经验：**")
                             for item in related[:3]:
                                 st.markdown(item)
-                        # 从行业风险库中检索相关条目
                         industry_related = []
                         for ir in st.session_state.industry_risks_db:
                             if risk['failure_mode'] in ir['failure_mode'] or risk['module'] in ir['failure_mode']:
