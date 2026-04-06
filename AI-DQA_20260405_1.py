@@ -21,40 +21,6 @@ st.set_page_config(page_title="AI+DQA 产品风险分析系统", page_icon="🔍
 # 自定义CSS
 st.markdown("""
 <style>
-    /* 强制主容器占满整个视口宽度 */
-    .main .block-container {
-        max-width: none !important;
-        width: 100% !important;
-        padding-left: 0rem !important;
-        padding-right: 0rem !important;
-    }
-    .stVerticalBlock, .stHorizontalBlock, div[data-testid="stVerticalBlock"] {
-        width: 100% !important;
-    }
-    .stTextInput > div, .stTextArea > div {
-        width: 100% !important;
-    }
-    .stMarkdown, .stMarkdown div, .stMarkdown p, .stMarkdown table {
-        width: 100% !important;
-        max-width: 100% !important;
-    }
-    .stMarkdown {
-        padding-left: 0 !important;
-        padding-right: 0 !important;
-    }
-    .stMarkdown table {
-        display: table !important;
-        overflow-x: auto;
-        width: 100% !important;
-    }
-    section[data-testid="stSidebar"] {
-        width: 300px !important;
-        flex-shrink: 0 !important;
-    }
-    section[data-testid="stSidebar"] + div {
-        width: calc(100% - 300px) !important;
-        flex: 1 !important;
-    }
     /* 中英文按钮红底 */
     .stButton button:has(span:contains("中文")),
     .stButton button:has(span:contains("English")) {
@@ -66,6 +32,7 @@ st.markdown("""
         padding: 0.5rem 1.2rem !important;
         border: none !important;
     }
+    /* 主分析按钮超大居中 */
     .main-analyze button {
         font-size: 36px !important;
         padding: 20px 60px !important;
@@ -87,6 +54,7 @@ st.markdown("""
         text-align: center;
         margin: 30px 0;
     }
+    /* 齿轮按钮默认样式 */
     .stButton button:has(span:contains("⚙️")) {
         background-color: transparent !important;
         color: #31333f !important;
@@ -98,12 +66,27 @@ st.markdown("""
         background-color: #f0f2f6 !important;
         transform: none !important;
     }
+    /* 侧边栏按钮保持原样 */
     section[data-testid="stSidebar"] .stButton button {
         background-color: #f0f2f6 !important;
         color: #31333f !important;
         font-size: 14px !important;
         border-radius: 8px !important;
         box-shadow: none !important;
+    }
+    /* 报告卡片内的表格样式 */
+    .report-card table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1em 0;
+    }
+    .report-card th, .report-card td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+    }
+    .report-card th {
+        background-color: #f2f2f2;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -933,37 +916,56 @@ col_center = st.columns([1, 2, 1])[1]
 with col_center:
     st.markdown('<div class="main-analyze">', unsafe_allow_html=True)
     if st.button(t["analyze_btn"], key="main_analyze_btn", type="primary"):
-        if not product_name:
-            st.error(t["product_name_missing"])
-        else:
-            db = st.session_state.database
-            with st.spinner(t["generating"]):
-                report_content = generate_ai_analysis_content(product_name, product_desc, st.session_state.enable_web_search, db)
-                
-                # 页面显示：手动添加分析人和免责声明
-                if analyst_name and analyst_name.strip():
-                    if analyst_title and analyst_title.strip():
-                        author_line = f"分析人：{analyst_name.strip()} ({analyst_title.strip()})"
-                    else:
-                        author_line = f"分析人：{analyst_name.strip()}"
+    if not product_name:
+        st.error(t["product_name_missing"])
+    else:
+        db = st.session_state.database
+        with st.spinner(t["generating"]):
+            report_content = generate_ai_analysis_content(product_name, product_desc, st.session_state.enable_web_search, db)
+            
+            # 页面显示：手动添加分析人和免责声明
+            if analyst_name and analyst_name.strip():
+                if analyst_title and analyst_title.strip():
+                    author_line = f"分析人：{analyst_name.strip()} ({analyst_title.strip()})"
                 else:
-                    author_line = "AI生成的风险分析报告"
-                disclaimer_line = "此报告是基于以上提供的有限信息，结合行业数据库和联网搜索结果生成的初步分析，仅供参考。"
-                full_report_display = f"{author_line}\n\n{disclaimer_line}\n\n{report_content}"
-                
-                # 页面报告标题改为新标题
-                st.markdown("### AI赋能DQA-产品设计风险分析报告")
-                st.markdown(full_report_display)
-                
-                # Word 下载
-                if report_content:
-                    word_bytes = generate_word_report(product_name, product_desc, analyst_name, analyst_title, report_content)
-                    st.download_button(
-                        label="📥 下载 Word 报告",
-                        data=word_bytes,
-                        file_name=f"{product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d')}.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    )
+                    author_line = f"分析人：{analyst_name.strip()}"
+            else:
+                author_line = "AI生成的风险分析报告"
+            disclaimer_line = "此报告是基于以上提供的有限信息，结合行业数据库和联网搜索结果生成的初步分析，仅供参考。"
+            full_report_display = f"{author_line}\n\n{disclaimer_line}\n\n{report_content}"
+            
+            # 添加分隔线
+            st.markdown("---")
+            
+            # 使用容器包装报告，添加卡片样式（浅灰背景、圆角、内边距）
+            st.markdown("""
+            <style>
+                .report-card {
+                    background-color: #f8f9fa;
+                    padding: 1.5rem;
+                    border-radius: 12px;
+                    margin: 1rem 0;
+                }
+            </style>
+            <div class="report-card">
+            """, unsafe_allow_html=True)
+            
+            # 报告标题
+            st.markdown("### AI赋能DQA-产品设计风险分析报告")
+            st.markdown(full_report_display)
+            
+            # 关闭容器div
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            # Word 下载按钮
+            if report_content:
+                word_bytes = generate_word_report(product_name, product_desc, analyst_name, analyst_title, report_content)
+                st.download_button(
+                    label="📥 下载 Word 报告",
+                    data=word_bytes,
+                    file_name=f"{product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d')}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
     st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("---")
