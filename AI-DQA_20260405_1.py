@@ -937,7 +937,7 @@ with col_center:
             # 添加分隔线
             st.markdown("---")
             
-            # 使用容器包装报告，添加卡片样式（浅灰背景、圆角、内边距）
+            # 使用容器包装报告，添加卡片样式
             st.markdown("""
             <style>
                 .report-card {
@@ -945,6 +945,19 @@ with col_center:
                     padding: 1.5rem;
                     border-radius: 12px;
                     margin: 1rem 0;
+                }
+                .report-card table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin: 1em 0;
+                }
+                .report-card th, .report-card td {
+                    border: 1px solid #ddd;
+                    padding: 8px;
+                    text-align: left;
+                }
+                .report-card th {
+                    background-color: #f2f2f2;
                 }
             </style>
             <div class="report-card">
@@ -957,7 +970,7 @@ with col_center:
             # 关闭容器div
             st.markdown("</div>", unsafe_allow_html=True)
             
-            # Word 下载按钮
+            # Word 下载
             if report_content:
                 word_bytes = generate_word_report(product_name, product_desc, analyst_name, analyst_title, report_content)
                 st.download_button(
