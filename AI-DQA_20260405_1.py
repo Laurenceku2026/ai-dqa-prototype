@@ -21,10 +21,12 @@ st.set_page_config(page_title="AI+DQA 产品风险分析系统", page_icon="🔍
 # 自定义CSS
 st.markdown("""
 <style>
+    /* 强制主容器占满整个视口宽度 */
     .main .block-container {
-        max-width: 100% !important;
-        padding-left: 2rem !important;
-        padding-right: 2rem !important;
+        max-width: none !important;
+        width: 100% !important;
+        padding-left: 0rem !important;
+        padding-right: 0rem !important;
     }
     .stVerticalBlock, .stHorizontalBlock, div[data-testid="stVerticalBlock"] {
         width: 100% !important;
@@ -45,6 +47,15 @@ st.markdown("""
         overflow-x: auto;
         width: 100% !important;
     }
+    section[data-testid="stSidebar"] {
+        width: 300px !important;
+        flex-shrink: 0 !important;
+    }
+    section[data-testid="stSidebar"] + div {
+        width: calc(100% - 300px) !important;
+        flex: 1 !important;
+    }
+    /* 中英文按钮红底 */
     .stButton button:has(span:contains("中文")),
     .stButton button:has(span:contains("English")) {
         background-color: #ff4b4b !important;
