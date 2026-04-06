@@ -18,21 +18,36 @@ from docx.oxml.ns import qn
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# 自定义CSS
+# 自定义CSS：报告铺满、与输入框等宽、按钮样式等
 st.markdown("""
 <style>
+    /* 主容器占满宽度，移除默认最大宽度 */
     .main .block-container {
         max-width: 100% !important;
-        padding-left: 2rem !important;
-        padding-right: 2rem !important;
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
     }
-    .stMarkdown, .stMarkdown div, .stMarkdown table {
+    /* 所有Markdown内容强制100%宽度 */
+    .stMarkdown, .stMarkdown div, .stMarkdown p, .stMarkdown table {
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+    /* 移除Markdown容器额外内边距 */
+    .stMarkdown {
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+    }
+    /* 文本输入框和文本域占满宽度 */
+    .stTextInput > div, .stTextArea > div {
         width: 100% !important;
     }
+    /* 表格自适应，允许水平滚动 */
     .stMarkdown table {
         display: table !important;
         overflow-x: auto;
+        width: 100% !important;
     }
+    /* 中英文按钮红底 */
     .stButton button:has(span:contains("中文")),
     .stButton button:has(span:contains("English")) {
         background-color: #ff4b4b !important;
@@ -43,6 +58,7 @@ st.markdown("""
         padding: 0.5rem 1.2rem !important;
         border: none !important;
     }
+    /* 主分析按钮超大居中 */
     .main-analyze button {
         font-size: 36px !important;
         padding: 20px 60px !important;
@@ -64,6 +80,7 @@ st.markdown("""
         text-align: center;
         margin: 30px 0;
     }
+    /* 齿轮按钮默认样式 */
     .stButton button:has(span:contains("⚙️")) {
         background-color: transparent !important;
         color: #31333f !important;
@@ -75,6 +92,7 @@ st.markdown("""
         background-color: #f0f2f6 !important;
         transform: none !important;
     }
+    /* 侧边栏按钮保持原样 */
     section[data-testid="stSidebar"] .stButton button {
         background-color: #f0f2f6 !important;
         color: #31333f !important;
@@ -286,7 +304,7 @@ class SQLiteDatabase(RiskDatabase):
         self.conn.commit()
         self.load_caches()
 
-# ================== Neo4j 实现（保持原样，略） ==================
+# ================== Neo4j 实现 ==================
 class Neo4jDatabase(RiskDatabase):
     def __init__(self):
         self.driver = None
@@ -571,7 +589,7 @@ def markdown_to_docx(md_text: str, doc: Document):
             doc.add_paragraph()
         i += 1
 
-# ================== AI 分析（双语报告） ==================
+# ================== AI 分析（双语报告，强制显示分析人） ==================
 def generate_ai_analysis(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase, analyst_name: str, analyst_title: str) -> str:
     all_knowledge = db.get_all_knowledge()
     lang = st.session_state.lang
@@ -583,9 +601,13 @@ def generate_ai_analysis(product_name: str, product_desc: str, enable_web: bool,
         with st.spinner("正在联网搜索..."):
             web_context = web_search(f"{product_name} 失效 案例", max_results=3)
     
+    # 构建作者信息（强制显示分析人，若未填则显示AI生成）
     if lang == "zh":
         if analyst_name and analyst_name.strip():
-            author_info = f"分析人：{analyst_name.strip()}" + (f" ({analyst_title.strip()})" if analyst_title else "")
+            if analyst_title and analyst_title.strip():
+                author_info = f"分析人：{analyst_name.strip()} ({analyst_title.strip()})"
+            else:
+                author_info = f"分析人：{analyst_name.strip()}"
         else:
             author_info = "AI生成的风险分析报告"
         disclaimer = "此报告是基于以上提供的有限信息，结合行业数据库和联网搜索结果生成的初步分析，仅供参考。"
@@ -617,7 +639,10 @@ def generate_ai_analysis(product_name: str, product_desc: str, enable_web: bool,
 """
     else:
         if analyst_name and analyst_name.strip():
-            author_info = f"Analyst: {analyst_name.strip()}" + (f" ({analyst_title.strip()})" if analyst_title else "")
+            if analyst_title and analyst_title.strip():
+                author_info = f"Analyst: {analyst_name.strip()} ({analyst_title.strip()})"
+            else:
+                author_info = f"Analyst: {analyst_name.strip()}"
         else:
             author_info = "AI-generated Risk Analysis Report"
         disclaimer = "This report is a preliminary analysis based on the limited information provided above, combined with industry databases and online search results. It is for reference only."
@@ -672,7 +697,8 @@ For the **{risk['module']}** issue **{risk['failure_mode']}** (cause: {risk['cau
 
 **RPN**: {risk.get('severity',0)} × {risk.get('occurrence',0)} × {risk.get('detection',0)} = **{risk.get('RPN',0)}**
 """
-        # ================== 管理员设置弹窗 ==================
+
+# ================== 管理员设置弹窗 ==================
 @st.dialog("管理员设置", width="large")
 def admin_settings_dialog():
     st.subheader("🔐 管理员验证")
@@ -727,9 +753,6 @@ def admin_settings_dialog():
     st.markdown("---")
     st.subheader("📥 导出/导入知识库（Excel）")
     if st.button("下载知识库模板 (Excel)"):
-        # 导出每条经验单独一行，列名双语
-        categories = ["光学", "机械", "材料", "热学", "电气", "控制"]
-        # 获取中文经验（导出中文版本）
         all_zh = st.session_state.database.sqlite.knowledge_zh
         max_len = max((len(all_zh.get(cat, [])) for cat in categories), default=0)
         export_data = {}
