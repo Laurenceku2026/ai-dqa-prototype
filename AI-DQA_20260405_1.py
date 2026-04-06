@@ -18,37 +18,34 @@ from docx.oxml.ns import qn
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# 自定义CSS：桌面端铺满宽度
+# 自定义CSS：强制桌面端宽度铺满，输入框和报告内容等宽
 st.markdown("""
 <style>
-    /* 主容器基础样式 */
+    /* 主容器占满整个视口宽度 */
     .main .block-container {
         max-width: 100% !important;
-        padding-left: 1rem !important;
-        padding-right: 1rem !important;
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
     }
-    /* 桌面端（宽度大于992px）进一步拉宽 */
-    @media (min-width: 992px) {
-        .main .block-container {
-            padding-left: 2rem !important;
-            padding-right: 2rem !important;
-        }
+    /* 所有列和垂直块占满宽度 */
+    .stVerticalBlock, .stHorizontalBlock, div[data-testid="stVerticalBlock"] {
+        width: 100% !important;
     }
-    /* 所有Markdown内容强制100%宽度 */
+    /* 文本输入框和文本域宽度100% */
+    .stTextInput > div, .stTextArea > div {
+        width: 100% !important;
+    }
+    /* 确保Markdown容器宽度100% */
     .stMarkdown, .stMarkdown div, .stMarkdown p, .stMarkdown table {
         width: 100% !important;
         max-width: 100% !important;
     }
-    /* 移除Markdown容器额外内边距 */
+    /* 移除Markdown容器的额外内边距 */
     .stMarkdown {
         padding-left: 0 !important;
         padding-right: 0 !important;
     }
-    /* 文本输入框和文本域占满宽度 */
-    .stTextInput > div, .stTextArea > div {
-        width: 100% !important;
-    }
-    /* 表格自适应 */
+    /* 表格允许水平滚动，但宽度100% */
     .stMarkdown table {
         display: table !important;
         overflow-x: auto;
@@ -532,12 +529,29 @@ def web_search(query: str, max_results=3) -> str:
     except Exception as e:
         return f"搜索失败: {str(e)}"
 
+# ================== 清理 AI 响应 ==================
+def clean_ai_response(text: str) -> str:
+    """移除AI可能添加的冗余开场白，只保留从产品分解开始的内容"""
+    # 常见开场白模式
+    patterns = [
+        r'^好的[，,].*?\n',
+        r'^作为一名资深可靠性工程师.*?\n',
+        r'^基于以上提供的信息.*?\n',
+        r'^根据您提供的信息.*?\n',
+        r'^以下是对.*?的风险分析报告.*?\n',
+    ]
+    for pat in patterns:
+        text = re.sub(pat, '', text, flags=re.IGNORECASE | re.DOTALL)
+    # 如果文本开头有“好的”等单独行，直接移除
+    lines = text.split('\n')
+    if lines and re.match(r'^好的[，,]?$', lines[0].strip()):
+        text = '\n'.join(lines[1:])
+    return text.strip()
+
 # ================== Markdown 转 Word（清理格式） ==================
 def clean_markdown_text(text: str) -> str:
     """移除 ** 和 <br> 标签"""
-    # 移除 ** 粗体标记
     text = re.sub(r'\*\*', '', text)
-    # 将 <br> 替换为换行
     text = re.sub(r'<br\s*/?>', '\n', text)
     return text
 
@@ -598,7 +612,7 @@ def markdown_to_docx(md_text: str, doc: Document):
             doc.add_paragraph()
         i += 1
 
-# ================== AI 分析（不包含头部，只输出报告内容） ==================
+# ================== AI 分析（只输出报告内容，不含头部） ==================
 def generate_ai_analysis_content(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase) -> str:
     all_knowledge = db.get_all_knowledge()
     lang = st.session_state.lang
@@ -625,14 +639,15 @@ def generate_ai_analysis_content(product_name: str, product_desc: str, enable_we
 === 联网搜索结果 ===
 {web_context if web_context else "未启用"}
 
-请输出 Markdown 格式报告，包含：
+请直接输出风险分析报告，不要添加任何开场白（如“好的”、“基于以上信息”等）。报告必须包含：
 ### 1. 产品分解
 ### 2. Top 5 潜在风险（表格：模块、失效模式、原因、严重度、发生度、探测度、RPN）
 ### 3. 关键风险缓解策略（针对RPN最高的3项）
 
 注意：表格中的模块名称不要加粗，不要出现 ** 符号。
 """
-    return call_deepseek(prompt, max_tokens=4000)
+    raw = call_deepseek(prompt, max_tokens=4000)
+    return clean_ai_response(raw)
 
 # ================== 生成 Word 报告（专业格式） ==================
 def generate_word_report(product_name: str, product_desc: str, analyst_name: str, analyst_title: str, report_content: str) -> BytesIO:
@@ -644,16 +659,16 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
         section.left_margin = Inches(1)
         section.right_margin = Inches(1)
     
-    # 标题
-    title = doc.add_heading("产品风险分析系统", level=1)
+    # 标题：产品名称
+    title = doc.add_heading(product_name, level=1)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
-    # 报告网址
+    # 报告在线地址
     url_para = doc.add_paragraph("报告在线地址：")
     url_para.add_run("https://ai-app-design-dfmea.streamlit.app/").italic = True
     doc.add_paragraph()
     
-    # 报告信息表格
+    # 报告基本信息表格
     info_table = doc.add_table(rows=4, cols=2)
     info_table.style = 'Table Grid'
     info_table.cell(0, 0).text = "产品名称"
@@ -661,7 +676,7 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
     info_table.cell(1, 0).text = "设计描述"
     info_table.cell(1, 1).text = product_desc
     info_table.cell(2, 0).text = "报告日期"
-    info_table.cell(2, 1).text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    info_table.cell(2, 1).text = datetime.now().strftime("%Y-%m-%d")
     analyst_str = analyst_name if analyst_name else "未填写"
     if analyst_title:
         analyst_str += f" ({analyst_title})"
@@ -907,7 +922,6 @@ with col_center:
         else:
             db = st.session_state.database
             with st.spinner(t["generating"]):
-                # 生成报告内容（不含头部）
                 report_content = generate_ai_analysis_content(product_name, product_desc, st.session_state.enable_web_search, db)
                 
                 # 页面显示：手动添加分析人和免责声明
@@ -929,7 +943,7 @@ with col_center:
                     st.download_button(
                         label="📥 下载 Word 报告",
                         data=word_bytes,
-                        file_name=f"{product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx",
+                        file_name=f"{product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d')}.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                     )
     st.markdown('</div>', unsafe_allow_html=True)
