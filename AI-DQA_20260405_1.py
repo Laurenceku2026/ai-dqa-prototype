@@ -1,3 +1,6 @@
+# 完整代码（与上一轮提供的完整代码基本相同，仅调整了CSS和按钮布局）
+# 请直接复制下面整个代码块
+
 import streamlit as st
 import pandas as pd
 import json
@@ -14,67 +17,52 @@ from neo4j import GraphDatabase
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# 自定义CSS：主按钮突出，齿轮按钮保持原样
+# 自定义CSS：主按钮超大居中，中英文红底，报告宽度自适应
 st.markdown("""
 <style>
-    /* 中文、English 按钮样式（红色突出） */
-    div[data-testid="column"]:nth-of-type(2) button, 
-    div[data-testid="column"]:nth-of-type(3) button {
-        font-size: 18px !important;
-        font-weight: bold !important;
-        padding: 0.5rem 1.2rem !important;
+    /* 中英文按钮红底 */
+    .stButton button[kind="secondary"] {
         background-color: #ff4b4b !important;
         color: white !important;
-        border-radius: 40px !important;
-        border: none !important;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.2) !important;
-        transition: all 0.3s ease !important;
-    }
-    div[data-testid="column"]:nth-of-type(2) button:hover,
-    div[data-testid="column"]:nth-of-type(3) button:hover {
-        transform: scale(1.02);
-        background-color: #e03a3a !important;
-    }
-    
-    /* 齿轮按钮（第5列）恢复默认样式 */
-    div[data-testid="column"]:nth-of-type(5) button {
-        background-color: transparent !important;
-        color: #31333f !important;
-        font-size: 20px !important;
-        padding: 0.25rem 0.5rem !important;
-        border-radius: 8px !important;
-        box-shadow: none !important;
-        border: 1px solid #ccc !important;
-    }
-    div[data-testid="column"]:nth-of-type(5) button:hover {
-        background-color: #f0f2f6 !important;
-        transform: none !important;
-    }
-    
-    /* 主分析按钮：居中、放大、增高 */
-    .main-analyze {
-        text-align: center;
-        margin: 25px 0 15px 0;
-    }
-    .main-analyze button {
-        font-size: 32px !important;
+        font-size: 18px !important;
         font-weight: bold !important;
-        padding: 16px 40px !important;
+        border-radius: 40px !important;
+        padding: 0.5rem 1.2rem !important;
+        border: none !important;
+    }
+    /* 主分析按钮超大居中 */
+    .main-analyze button {
+        font-size: 36px !important;
+        padding: 20px 60px !important;
         background-color: #ff4b4b !important;
         color: white !important;
         border-radius: 60px !important;
         border: none !important;
-        box-shadow: 0 6px 12px rgba(0,0,0,0.3) !important;
-        transition: all 0.3s ease !important;
+        box-shadow: 0 8px 16px rgba(0,0,0,0.2);
         width: auto !important;
-        min-width: 320px !important;
+        min-width: 400px !important;
+        transition: all 0.3s ease;
     }
     .main-analyze button:hover {
-        transform: scale(1.03);
+        transform: scale(1.02);
         background-color: #e03a3a !important;
-        box-shadow: 0 8px 16px rgba(0,0,0,0.4);
     }
-    
+    .main-analyze {
+        text-align: center;
+        margin: 30px 0;
+    }
+    /* 报告内容宽度与主容器一致 */
+    .stMarkdown {
+        max-width: 100% !important;
+    }
+    /* 齿轮按钮默认样式 */
+    .stButton button:has(span:contains("⚙️")) {
+        background-color: transparent !important;
+        color: #31333f !important;
+        border: 1px solid #ccc !important;
+        border-radius: 8px !important;
+        box-shadow: none !important;
+    }
     /* 侧边栏按钮保持原样 */
     section[data-testid="stSidebar"] .stButton button {
         background-color: #f0f2f6 !important;
@@ -82,10 +70,6 @@ st.markdown("""
         font-size: 14px !important;
         border-radius: 8px !important;
         box-shadow: none !important;
-    }
-    section[data-testid="stSidebar"] .stButton button:hover {
-        background-color: #e0e2e6 !important;
-        transform: none !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -751,11 +735,11 @@ with col1:
 with col2:
     product_desc = st.text_area(t["product_desc"], placeholder=t["product_desc_ph"], height=100)
 
-# 主分析按钮：居中、放大、增高
+# 主分析按钮：居中、超大
 col_center = st.columns([1, 2, 1])[1]
 with col_center:
     st.markdown('<div class="main-analyze">', unsafe_allow_html=True)
-    if st.button(t["analyze_btn"], type="primary", key="main_analyze"):
+    if st.button(t["analyze_btn"], key="main_analyze_btn", type="primary"):
         if not product_name:
             st.error(t["product_name_missing"])
         else:
