@@ -10,6 +10,10 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from duckduckgo_search import DDGS
 from neo4j import GraphDatabase
+from docx import Document
+from docx.shared import Inches, Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
 
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
@@ -17,18 +21,22 @@ st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", lay
 # 自定义CSS：报告铺满宽度、中英文红底、齿轮无红底、主按钮超大居中
 st.markdown("""
 <style>
+    /* 强制主内容区域占满宽度，移除默认最大宽度 */
     .main .block-container {
         max-width: 100% !important;
         padding-left: 2rem !important;
         padding-right: 2rem !important;
     }
+    /* 让所有Markdown内容（包括表格）宽度100% */
     .stMarkdown, .stMarkdown div, .stMarkdown table {
         width: 100% !important;
     }
+    /* 表格自适应 */
     .stMarkdown table {
         display: table !important;
         overflow-x: auto;
     }
+    /* 中英文按钮红底（基于按钮文本内容） */
     .stButton button:has(span:contains("中文")),
     .stButton button:has(span:contains("English")) {
         background-color: #ff4b4b !important;
@@ -39,6 +47,7 @@ st.markdown("""
         padding: 0.5rem 1.2rem !important;
         border: none !important;
     }
+    /* 主分析按钮超大居中 */
     .main-analyze button {
         font-size: 36px !important;
         padding: 20px 60px !important;
@@ -60,6 +69,7 @@ st.markdown("""
         text-align: center;
         margin: 30px 0;
     }
+    /* 齿轮按钮：无红底，默认样式 */
     .stButton button:has(span:contains("⚙️")) {
         background-color: transparent !important;
         color: #31333f !important;
@@ -71,6 +81,7 @@ st.markdown("""
         background-color: #f0f2f6 !important;
         transform: none !important;
     }
+    /* 侧边栏按钮保持原样 */
     section[data-testid="stSidebar"] .stButton button {
         background-color: #f0f2f6 !important;
         color: #31333f !important;
@@ -485,6 +496,71 @@ def web_search(query: str, max_results=3) -> str:
     except Exception as e:
         return f"搜索失败: {str(e)}"
 
+# ================== Markdown 转 Word 函数 ==================
+def markdown_to_docx(md_text: str, doc: Document):
+    """将 Markdown 文本转换为 Word 文档内容"""
+    lines = md_text.split('\n')
+    i = 0
+    in_table = False
+    while i < len(lines):
+        line = lines[i].strip()
+        if line.startswith('# '):
+            doc.add_heading(line[2:], level=1)
+            i += 1
+            continue
+        if line.startswith('## '):
+            doc.add_heading(line[3:], level=2)
+            i += 1
+            continue
+        if line.startswith('### '):
+            doc.add_heading(line[4:], level=3)
+            i += 1
+            continue
+        if line.startswith('|') and not in_table:
+            in_table = True
+            table_lines = []
+            while i < len(lines) and lines[i].strip().startswith('|'):
+                table_lines.append(lines[i].strip())
+                i += 1
+            if len(table_lines) >= 2:
+                header_cells = [cell.strip() for cell in table_lines[0].split('|')[1:-1]]
+                if '---' in table_lines[1]:
+                    data_lines = table_lines[2:]
+                else:
+                    data_lines = table_lines[1:]
+                num_cols = len(header_cells)
+                if num_cols > 0 and data_lines:
+                    table = doc.add_table(rows=1+len(data_lines), cols=num_cols)
+                    table.style = 'Table Grid'
+                    for col_idx, cell_text in enumerate(header_cells):
+                        table.cell(0, col_idx).text = cell_text
+                        for paragraph in table.cell(0, col_idx).paragraphs:
+                            for run in paragraph.runs:
+                                run.font.bold = True
+                    for row_idx, data_line in enumerate(data_lines):
+                        cells = [cell.strip() for cell in data_line.split('|')[1:-1]]
+                        for col_idx, cell_text in enumerate(cells):
+                            if col_idx < num_cols:
+                                table.cell(row_idx+1, col_idx).text = cell_text
+                    doc.add_paragraph()
+            in_table = False
+            continue
+        if line:
+            p = doc.add_paragraph()
+            parts = re.split(r'(\*\*.*?\*\*)', line)
+            for part in parts:
+                if part.startswith('**') and part.endswith('**'):
+                    run = p.add_run(part[2:-2])
+                    run.font.bold = True
+                else:
+                    p.add_run(part)
+            for run in p.runs:
+                run.font.name = '宋体'
+                run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+        else:
+            doc.add_paragraph()
+        i += 1
+
 # ================== AI 分析（增加分析人信息） ==================
 def generate_ai_analysis(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase, analyst_name: str, analyst_title: str) -> str:
     all_knowledge = db.get_all_knowledge()
@@ -496,7 +572,6 @@ def generate_ai_analysis(product_name: str, product_desc: str, enable_web: bool,
         with st.spinner("正在联网搜索..."):
             web_context = web_search(f"{product_name} 失效 案例", max_results=3)
     
-    # 构建作者信息
     if analyst_name and analyst_name.strip():
         if analyst_title and analyst_title.strip():
             author_info = f"分析人：{analyst_name.strip()} ({analyst_title.strip()})"
@@ -505,7 +580,6 @@ def generate_ai_analysis(product_name: str, product_desc: str, enable_web: bool,
     else:
         author_info = "AI生成的风险分析报告"
     
-    # 固定提示句
     disclaimer = "此报告是基于以上提供的有限信息，结合行业数据库和联网搜索结果生成的初步分析，仅供参考。"
     
     prompt = f"""
@@ -547,7 +621,6 @@ def generate_mitigation_strategy(risk: Dict) -> str:
 
 **RPN**：{risk.get('severity',0)} × {risk.get('occurrence',0)} × {risk.get('detection',0)} = **{risk.get('RPN',0)}**
 """
-
 # ================== 管理员设置弹窗 ==================
 @st.dialog("管理员设置", width="large")
 def admin_settings_dialog():
@@ -771,10 +844,34 @@ with col_center:
         else:
             db = st.session_state.database
             with st.spinner(t["generating"]):
-                # 获取侧边栏的分析人信息
                 report = generate_ai_analysis(product_name, product_desc, st.session_state.enable_web_search, db, analyst_name, analyst_title)
                 st.markdown("### 🤖 AI 生成的风险分析报告")
                 st.markdown(report)
+                # Word 下载按钮
+                if report:
+                    try:
+                        doc = Document()
+                        for section in doc.sections:
+                            section.top_margin = Inches(1)
+                            section.bottom_margin = Inches(1)
+                            section.left_margin = Inches(1)
+                            section.right_margin = Inches(1)
+                        title_para = doc.add_heading(t["title"], level=1)
+                        title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        doc.add_paragraph(f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                        doc.add_paragraph()
+                        markdown_to_docx(report, doc)
+                        doc_bytes = BytesIO()
+                        doc.save(doc_bytes)
+                        doc_bytes.seek(0)
+                        st.download_button(
+                            label="📥 下载 Word 报告",
+                            data=doc_bytes,
+                            file_name=f"{product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
+                    except Exception as e:
+                        st.error(f"生成 Word 文档失败: {e}")
     st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("---")
