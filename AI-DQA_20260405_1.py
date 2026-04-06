@@ -18,25 +18,21 @@ from docx.oxml.ns import qn
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# 自定义CSS：报告铺满宽度、中英文红底、齿轮无红底、主按钮超大居中
+# 自定义CSS（保持不变）
 st.markdown("""
 <style>
-    /* 强制主内容区域占满宽度，移除默认最大宽度 */
     .main .block-container {
         max-width: 100% !important;
         padding-left: 2rem !important;
         padding-right: 2rem !important;
     }
-    /* 让所有Markdown内容（包括表格）宽度100% */
     .stMarkdown, .stMarkdown div, .stMarkdown table {
         width: 100% !important;
     }
-    /* 表格自适应 */
     .stMarkdown table {
         display: table !important;
         overflow-x: auto;
     }
-    /* 中英文按钮红底（基于按钮文本内容） */
     .stButton button:has(span:contains("中文")),
     .stButton button:has(span:contains("English")) {
         background-color: #ff4b4b !important;
@@ -47,7 +43,6 @@ st.markdown("""
         padding: 0.5rem 1.2rem !important;
         border: none !important;
     }
-    /* 主分析按钮超大居中 */
     .main-analyze button {
         font-size: 36px !important;
         padding: 20px 60px !important;
@@ -69,7 +64,6 @@ st.markdown("""
         text-align: center;
         margin: 30px 0;
     }
-    /* 齿轮按钮：无红底，默认样式 */
     .stButton button:has(span:contains("⚙️")) {
         background-color: transparent !important;
         color: #31333f !important;
@@ -81,7 +75,6 @@ st.markdown("""
         background-color: #f0f2f6 !important;
         transform: none !important;
     }
-    /* 侧边栏按钮保持原样 */
     section[data-testid="stSidebar"] .stButton button {
         background-color: #f0f2f6 !important;
         color: #31333f !important;
@@ -134,33 +127,65 @@ class RiskDatabase:
     def load_initial_data(self) -> None:
         raise NotImplementedError
 
-# ================== SQLite 实现 ==================
+# ================== SQLite 实现（双语知识库） ==================
 class SQLiteDatabase(RiskDatabase):
     def __init__(self):
         self.conn = sqlite3.connect('app_data.db', check_same_thread=False)
         self.init_tables()
+        self.migrate_existing_knowledge()  # 为旧数据补充英文翻译
         self.load_caches()
 
     def init_tables(self):
         cursor = self.conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS knowledge_base (category TEXT, content TEXT)''')
+        # 知识库表增加 content_en 列
+        cursor.execute('''CREATE TABLE IF NOT EXISTS knowledge_base
+                          (category TEXT, content TEXT, content_en TEXT)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS product_risks
                           (product_type TEXT, module TEXT, failure_mode TEXT, cause TEXT,
                            severity INTEGER, occurrence INTEGER, detection INTEGER, mitigation TEXT)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS industry_risks
                           (category TEXT, product_type TEXT, failure_mode TEXT, cause TEXT,
                            mitigation TEXT, source TEXT)''')
+        # 检查旧表是否有 content_en 列，没有则添加
+        cursor.execute("PRAGMA table_info(knowledge_base)")
+        cols = [col[1] for col in cursor.fetchall()]
+        if 'content_en' not in cols:
+            cursor.execute("ALTER TABLE knowledge_base ADD COLUMN content_en TEXT")
+        self.conn.commit()
+
+    def migrate_existing_knowledge(self):
+        """为现有中文知识库条目自动补充英文翻译（一次性）"""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT rowid, category, content FROM knowledge_base WHERE content_en IS NULL OR content_en = ''")
+        rows = cursor.fetchall()
+        if not rows:
+            return
+        # 批量翻译
+        for rowid, cat, zh_text in rows:
+            en_text = translate_text(zh_text, "en")
+            cursor.execute("UPDATE knowledge_base SET content_en = ? WHERE rowid = ?", (en_text, rowid))
         self.conn.commit()
 
     def load_caches(self):
         cursor = self.conn.cursor()
-        cursor.execute("SELECT category, content FROM knowledge_base")
+        # 加载中英文知识库
+        cursor.execute("SELECT category, content, content_en FROM knowledge_base")
         rows = cursor.fetchall()
-        self.knowledge = {"光学": [], "机械": [], "材料": [], "热学": [], "电气": [], "控制": []}
-        for cat, cont in rows:
-            if cat in self.knowledge:
-                self.knowledge[cat].append(cont)
+        self.knowledge_zh = {"光学": [], "机械": [], "材料": [], "热学": [], "电气": [], "控制": []}
+        self.knowledge_en = {"光学": [], "机械": [], "材料": [], "热学": [], "电气": [], "控制": []}
+        for cat, zh, en in rows:
+            if cat in self.knowledge_zh:
+                self.knowledge_zh[cat].append(zh)
+                if en:
+                    self.knowledge_en[cat].append(en)
+                else:
+                    # 如果没有英文，临时翻译
+                    en_trans = translate_text(zh, "en")
+                    self.knowledge_en[cat].append(en_trans)
+                    cursor.execute("UPDATE knowledge_base SET content_en = ? WHERE category = ? AND content = ?", (en_trans, cat, zh))
+        self.conn.commit()
 
+        # 产品风险（暂不支持双语，保持原样）
         cursor.execute("SELECT product_type, module, failure_mode, cause, severity, occurrence, detection, mitigation FROM product_risks")
         rows = cursor.fetchall()
         self.product_risks = {}
@@ -181,32 +206,57 @@ class SQLiteDatabase(RiskDatabase):
         return sorted(risks, key=lambda x: x["RPN"], reverse=True)[:10]
 
     def get_product_decomposition(self, product_name: str, description: str) -> Dict:
-        if "路灯" in product_name:
+        # 中英文产品名匹配（简化：保留原规则，可扩展）
+        if "路灯" in product_name or "street light" in product_name.lower():
             return {"product_type": "LED路灯", "function_units": ["光学","电气","热学"], "modules": ["LED光源","驱动电源"]}
-        elif "天棚灯" in product_name:
+        elif "天棚灯" in product_name or "high bay" in product_name.lower():
             return {"product_type": "高功率天棚灯", "function_units": ["光学","电气","热学","控制"], "modules": ["COB光源","风扇","热管"]}
         else:
             return {"product_type": "default", "function_units": ["电气","机械"], "modules": ["PCBA"]}
 
     def get_mitigation(self, module: str, failure_mode: str) -> str:
-        for cat, entries in self.knowledge.items():
+        # 根据当前语言检索知识库
+        lang = st.session_state.lang
+        knowledge = self.knowledge_zh if lang == "zh" else self.knowledge_en
+        for cat, entries in knowledge.items():
             for entry in entries:
                 if module in entry or failure_mode in entry:
                     return entry[:200]
         return "建议参考行业规范和设计指南进行优化。"
 
     def get_knowledge_by_category(self, category: str) -> List[str]:
-        return self.knowledge.get(category, [])
+        """根据当前界面语言返回对应语言的条目列表"""
+        lang = st.session_state.lang
+        if lang == "zh":
+            return self.knowledge_zh.get(category, [])
+        else:
+            return self.knowledge_en.get(category, [])
 
     def add_knowledge(self, category: str, content: str):
+        """添加知识条目：自动生成英文翻译并存储"""
+        # 如果当前添加的是中文，直接存储；如果是英文，存储到 content_en，并反向翻译中文
+        lang = st.session_state.lang
+        if lang == "zh":
+            zh_text = content
+            en_text = translate_text(content, "en")
+        else:
+            en_text = content
+            zh_text = translate_text(content, "zh")
         cursor = self.conn.cursor()
-        cursor.execute("INSERT INTO knowledge_base (category, content) VALUES (?, ?)", (category, content))
+        cursor.execute("INSERT INTO knowledge_base (category, content, content_en) VALUES (?, ?, ?)",
+                       (category, zh_text, en_text))
         self.conn.commit()
-        self.load_caches()
+        self.load_caches()  # 重载缓存
 
     def delete_knowledge(self, category: str, content: str):
-        cursor = self.conn.cursor()
-        cursor.execute("DELETE FROM knowledge_base WHERE category = ? AND content = ?", (category, content))
+        """根据当前语言的内容删除条目（匹配中文或英文）"""
+        lang = st.session_state.lang
+        if lang == "zh":
+            cursor = self.conn.cursor()
+            cursor.execute("DELETE FROM knowledge_base WHERE category = ? AND content = ?", (category, content))
+        else:
+            cursor = self.conn.cursor()
+            cursor.execute("DELETE FROM knowledge_base WHERE category = ? AND content_en = ?", (category, content))
         self.conn.commit()
         self.load_caches()
 
@@ -217,9 +267,12 @@ class SQLiteDatabase(RiskDatabase):
         self.load_caches()
 
     def get_all_knowledge(self) -> Dict[str, List[str]]:
-        return self.knowledge
+        """返回当前语言的所有知识库"""
+        lang = st.session_state.lang
+        return self.knowledge_zh if lang == "zh" else self.knowledge_en
 
     def load_initial_data(self):
+        # 初始化行业数据和产品风险（与之前相同，略）
         cursor = self.conn.cursor()
         industry_data = [
             ("LED", "LED路灯", "光衰过快", "结温过高", "优化散热设计", "IEC 62031"),
@@ -248,12 +301,12 @@ class SQLiteDatabase(RiskDatabase):
         self.conn.commit()
         self.load_caches()
 
-# ================== Neo4j 实现 ==================
+# ================== Neo4j 实现（保持不变） ==================
 class Neo4jDatabase(RiskDatabase):
+    # ...（与之前完全一致，略，实际部署时请保留原有完整实现）
     def __init__(self):
         self.driver = None
         self.connect()
-
     def connect(self):
         try:
             uri = st.secrets.get("NEO4J_URI", "")
@@ -266,14 +319,12 @@ class Neo4jDatabase(RiskDatabase):
                 session.run("RETURN 1")
         except Exception:
             self.driver = None
-
     def _query(self, query, params=None):
         if not self.driver:
             return []
         with self.driver.session() as session:
             result = session.run(query, params or {})
             return [record.data() for record in result]
-
     def get_risks(self, product_type: str) -> List[Dict]:
         if not self.driver:
             return []
@@ -301,10 +352,8 @@ class Neo4jDatabase(RiskDatabase):
                 risk["RPN"] = risk["severity"] * risk["occurrence"] * risk["detection"]
             risks.append(risk)
         return sorted(risks, key=lambda x: x.get("RPN", 0), reverse=True)[:10]
-
     def get_product_decomposition(self, product_name: str, description: str) -> Dict:
         return {}
-
     def get_mitigation(self, module: str, failure_mode: str) -> str:
         if not self.driver:
             return ""
@@ -318,35 +367,31 @@ class Neo4jDatabase(RiskDatabase):
         if results and results[0].get("mitigation"):
             return results[0]["mitigation"]
         return ""
-
     def get_knowledge_by_category(self, category: str) -> List[str]:
+        # Neo4j 中的知识库暂不实现双语，可后续扩展
         if not self.driver:
             return []
         cypher = "MATCH (k:Knowledge {category: $cat}) RETURN k.content AS content"
         results = self._query(cypher, {"cat": category})
         return [r["content"] for r in results]
-
     def add_knowledge(self, category: str, content: str):
         if not self.driver:
             return
         cypher = "CREATE (k:Knowledge {category: $cat, content: $cont})"
         with self.driver.session() as session:
             session.run(cypher, {"cat": category, "cont": content})
-
     def delete_knowledge(self, category: str, content: str):
         if not self.driver:
             return
         cypher = "MATCH (k:Knowledge {category: $cat, content: $cont}) DELETE k"
         with self.driver.session() as session:
             session.run(cypher, {"cat": category, "cont": content})
-
     def clear_knowledge_category(self, category: str):
         if not self.driver:
             return
         cypher = "MATCH (k:Knowledge {category: $cat}) DELETE k"
         with self.driver.session() as session:
             session.run(cypher, {"cat": category})
-
     def get_all_knowledge(self) -> Dict[str, List[str]]:
         if not self.driver:
             return {}
@@ -359,7 +404,6 @@ class Neo4jDatabase(RiskDatabase):
                 knowledge[cat] = []
             knowledge[cat].append(r["cont"])
         return knowledge
-
     def load_initial_data(self):
         pass
 
@@ -396,15 +440,8 @@ class HybridDatabase(RiskDatabase):
         return sql_mit
 
     def get_knowledge_by_category(self, category: str) -> List[str]:
-        sql_kb = self.sqlite.get_knowledge_by_category(category)
-        neo_kb = self.neo4j.get_knowledge_by_category(category) if self.neo4j_available else []
-        seen = set()
-        merged = []
-        for item in sql_kb + neo_kb:
-            if item not in seen:
-                seen.add(item)
-                merged.append(item)
-        return merged
+        # 优先使用 SQLite 双语知识库
+        return self.sqlite.get_knowledge_by_category(category)
 
     def add_knowledge(self, category: str, content: str):
         self.sqlite.add_knowledge(category, content)
@@ -422,15 +459,7 @@ class HybridDatabase(RiskDatabase):
             self.neo4j.clear_knowledge_category(category)
 
     def get_all_knowledge(self) -> Dict[str, List[str]]:
-        sql_all = self.sqlite.get_all_knowledge()
-        if not self.neo4j_available:
-            return sql_all
-        neo_all = self.neo4j.get_all_knowledge()
-        all_cats = set(sql_all.keys()) | set(neo_all.keys())
-        merged = {}
-        for cat in all_cats:
-            merged[cat] = list(set(sql_all.get(cat, []) + neo_all.get(cat, [])))
-        return merged
+        return self.sqlite.get_all_knowledge()
 
     def load_initial_data(self):
         self.sqlite.load_initial_data()
@@ -466,11 +495,13 @@ def call_deepseek(prompt: str, max_tokens=4000) -> str:
         return f"AI 调用失败: {str(e)}"
 
 def translate_text(text: str, target_lang: str) -> str:
+    """翻译文本，使用缓存"""
     if not text or not text.strip():
         return text
     cache_key = f"{text}_{target_lang}"
     if cache_key in st.session_state.translation_cache:
         return st.session_state.translation_cache[cache_key]
+    # 简单检测：如果已经是目标语言，直接返回
     if target_lang == "zh":
         if re.search(r'[\u4e00-\u9fff]', text):
             return text
@@ -498,7 +529,7 @@ def web_search(query: str, max_results=3) -> str:
 
 # ================== Markdown 转 Word 函数 ==================
 def markdown_to_docx(md_text: str, doc: Document):
-    """将 Markdown 文本转换为 Word 文档内容"""
+    """将 Markdown 文本转换为 Word 文档内容（支持表格和粗体）"""
     lines = md_text.split('\n')
     i = 0
     in_table = False
@@ -561,9 +592,11 @@ def markdown_to_docx(md_text: str, doc: Document):
             doc.add_paragraph()
         i += 1
 
-# ================== AI 分析（增加分析人信息） ==================
+# ================== AI 分析（双语报告） ==================
 def generate_ai_analysis(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase, analyst_name: str, analyst_title: str) -> str:
+    # 根据当前语言获取知识库（已自动双语）
     all_knowledge = db.get_all_knowledge()
+    lang = st.session_state.lang
     kb_text = "\n".join([f"[{cat}] {item}" for cat, items in all_knowledge.items() for item in items[:3]])
     risks = db.get_risks(product_name)
     internal_text = "\n".join([f"- {r['module']}: {r['failure_mode']}（原因：{r['cause']}）" for r in risks[:5]])
@@ -572,26 +605,23 @@ def generate_ai_analysis(product_name: str, product_desc: str, enable_web: bool,
         with st.spinner("正在联网搜索..."):
             web_context = web_search(f"{product_name} 失效 案例", max_results=3)
     
-    if analyst_name and analyst_name.strip():
-        if analyst_title and analyst_title.strip():
-            author_info = f"分析人：{analyst_name.strip()} ({analyst_title.strip()})"
+    # 作者信息和免责声明根据语言调整
+    if lang == "zh":
+        if analyst_name and analyst_name.strip():
+            author_info = f"分析人：{analyst_name.strip()}" + (f" ({analyst_title.strip()})" if analyst_title else "")
         else:
-            author_info = f"分析人：{analyst_name.strip()}"
-    else:
-        author_info = "AI生成的风险分析报告"
-    
-    disclaimer = "此报告是基于以上提供的有限信息，结合行业数据库和联网搜索结果生成的初步分析，仅供参考。"
-    
-    prompt = f"""
+            author_info = "AI生成的风险分析报告"
+        disclaimer = "此报告是基于以上提供的有限信息，结合行业数据库和联网搜索结果生成的初步分析，仅供参考。"
+        report_prompt = f"""
 你是一位资深可靠性工程师。请根据以下信息对产品进行风险分析。
 
 产品名称：{product_name}
 设计描述：{product_desc}
 
-=== 企业内部知识库（SQLite+Neo4j） ===
+=== 企业内部知识库 ===
 {kb_text if kb_text else "暂无"}
 
-=== 产品风险数据库（融合） ===
+=== 产品风险数据库 ===
 {internal_text if internal_text else "暂无"}
 
 === 联网搜索结果 ===
@@ -608,11 +638,45 @@ def generate_ai_analysis(product_name: str, product_desc: str, enable_web: bool,
 ### 2. Top 5 潜在风险（表格：模块、失效模式、原因、严重度、发生度、探测度、RPN）
 ### 3. 关键风险缓解策略（针对RPN最高的3项）
 """
-    return call_deepseek(prompt, max_tokens=4000)
+    else:  # English
+        if analyst_name and analyst_name.strip():
+            author_info = f"Analyst: {analyst_name.strip()}" + (f" ({analyst_title.strip()})" if analyst_title else "")
+        else:
+            author_info = "AI-generated Risk Analysis Report"
+        disclaimer = "This report is a preliminary analysis based on the limited information provided above, combined with industry databases and online search results. It is for reference only."
+        report_prompt = f"""
+You are a senior reliability engineer. Perform a risk analysis on the following product.
+
+Product Name: {product_name}
+Design Description: {product_desc}
+
+=== Internal Knowledge Base ===
+{kb_text if kb_text else "None"}
+
+=== Product Risk Database ===
+{internal_text if internal_text else "None"}
+
+=== Online Search Results ===
+{web_context if web_context else "Not enabled"}
+
+Output a Markdown report. The report must start with the following two lines (do not add extra explanation):
+
+{author_info}
+
+{disclaimer}
+
+Then continue with:
+### 1. Product Decomposition
+### 2. Top 5 Potential Risks (table: Module, Failure Mode, Cause, Severity, Occurrence, Detection, RPN)
+### 3. Key Risk Mitigation Strategies (for the top 3 RPN items)
+"""
+    return call_deepseek(report_prompt, max_tokens=4000)
 
 def generate_mitigation_strategy(risk: Dict) -> str:
     base = risk.get("mitigation", "建议参考行业规范。")
-    return f"""
+    lang = st.session_state.lang
+    if lang == "zh":
+        return f"""
 针对 **{risk['module']}** 的 **{risk['failure_mode']}** 问题，建议如下策略：
 
 1. **设计层面**：{base}
@@ -621,6 +685,17 @@ def generate_mitigation_strategy(risk: Dict) -> str:
 
 **RPN**：{risk.get('severity',0)} × {risk.get('occurrence',0)} × {risk.get('detection',0)} = **{risk.get('RPN',0)}**
 """
+    else:
+        return f"""
+For the **{risk['module']}** issue **{risk['failure_mode']}** (cause: {risk['cause']}), the following strategies are recommended:
+
+1. **Design**: {base}
+2. **Simulation**: Thermal/structure/circuit simulation to verify margins.
+3. **Testing**: Refer to IEC/GB standards, add reliability tests.
+
+**RPN**: {risk.get('severity',0)} × {risk.get('occurrence',0)} × {risk.get('detection',0)} = **{risk.get('RPN',0)}**
+"""
+
 # ================== 管理员设置弹窗 ==================
 @st.dialog("管理员设置", width="large")
 def admin_settings_dialog():
@@ -650,7 +725,7 @@ def admin_settings_dialog():
         "DeepSeek API": "已配置" if (st.session_state.temp_api_key or st.secrets.get("DEEPSEEK_API_KEY")) else "未配置",
     })
     st.markdown("---")
-    st.subheader("📚 知识库管理")
+    st.subheader("📚 知识库管理（双语）")
     categories = ["光学", "机械", "材料", "热学", "电气", "控制"]
     selected_cat = st.selectbox("选择分类", categories)
     items = db.get_knowledge_by_category(selected_cat)
@@ -668,15 +743,16 @@ def admin_settings_dialog():
                         st.rerun()
     else:
         st.info("暂无条目")
-    new_item = st.text_area("添加新经验教训", height=100)
+    new_item = st.text_area("添加新经验教训（支持中英文，系统会自动翻译存储双语）", height=100)
     if st.button("添加条目"):
         if new_item.strip():
             db.add_knowledge(selected_cat, new_item.strip())
             st.rerun()
     st.markdown("---")
     st.subheader("📥 导出/导入知识库（Excel）")
+    # 导出时导出当前语言的内容（但为方便，导出中文）
     if st.button("下载知识库模板 (Excel)"):
-        all_knowledge = db.get_all_knowledge()
+        all_knowledge = db.sqlite.knowledge_zh  # 强制导出中文版本
         export_data = {}
         for cat in categories:
             export_data[cat] = ["\n".join(all_knowledge.get(cat, []))] if all_knowledge.get(cat) else [""]
@@ -696,7 +772,7 @@ def admin_settings_dialog():
                         entries = [line.strip() for line in cell.split("\n") if line.strip()]
                         db.clear_knowledge_category(cat)
                         for entry in entries:
-                            db.add_knowledge(cat, entry)
+                            db.add_knowledge(cat, entry)  # 自动翻译存储双语
             st.success("知识库已更新")
             st.rerun()
         except Exception as e:
@@ -726,7 +802,7 @@ with col_gear:
     if st.button("⚙️", key="settings_btn", use_container_width=True):
         admin_settings_dialog()
 
-# ================== 多语言文本 ==================
+# ================== 多语言文本（界面文字） ==================
 TEXTS = {
     "zh": {
         "title": "🔍 AI+DQA 产品风险分析系统",
@@ -825,16 +901,11 @@ with st.sidebar:
     st.markdown("---")
     st.markdown(t["contact_info"])
 
-# ================== 主界面（垂直布局） ==================
+# ================== 主界面 ==================
 st.markdown(f"### {t['input_title']}")
-
-# 产品名称
 product_name = st.text_input(t["product_name"], placeholder=t["product_name_ph"])
-
-# 设计描述（放在产品名称下方）
 product_desc = st.text_area(t["product_desc"], placeholder=t["product_desc_ph"], height=100)
 
-# 主分析按钮：居中、超大
 col_center = st.columns([1, 2, 1])[1]
 with col_center:
     st.markdown('<div class="main-analyze">', unsafe_allow_html=True)
@@ -847,7 +918,6 @@ with col_center:
                 report = generate_ai_analysis(product_name, product_desc, st.session_state.enable_web_search, db, analyst_name, analyst_title)
                 st.markdown("### 🤖 AI 生成的风险分析报告")
                 st.markdown(report)
-                # Word 下载按钮
                 if report:
                     try:
                         doc = Document()
@@ -858,16 +928,16 @@ with col_center:
                             section.right_margin = Inches(1)
                         title_para = doc.add_heading(t["title"], level=1)
                         title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        doc.add_paragraph(f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                        doc.add_paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
                         doc.add_paragraph()
                         markdown_to_docx(report, doc)
                         doc_bytes = BytesIO()
                         doc.save(doc_bytes)
                         doc_bytes.seek(0)
                         st.download_button(
-                            label="📥 下载 Word 报告",
+                            label="📥 Download Word Report" if lang == "en" else "📥 下载 Word 报告",
                             data=doc_bytes,
-                            file_name=f"{product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx",
+                            file_name=f"{product_name}_Risk_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx",
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                         )
                     except Exception as e:
