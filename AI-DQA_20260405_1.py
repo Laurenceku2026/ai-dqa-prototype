@@ -19,14 +19,12 @@ if "lang" not in st.session_state:
     st.session_state.lang = "zh"
 if "admin_logged_in" not in st.session_state:
     st.session_state.admin_logged_in = False
-if "db_type" not in st.session_state:
-    st.session_state.db_type = "SQLite"
 if "enable_web_search" not in st.session_state:
-    st.session_state.enable_web_search = False
+    st.session_state.enable_web_search = True   # 默认开启联网搜索
 if "translation_cache" not in st.session_state:
     st.session_state.translation_cache = {}
 
-# LLM 临时覆盖配置
+# LLM 临时覆盖配置（仅管理员可修改，但默认从 secrets 读取）
 if "temp_api_key" not in st.session_state:
     st.session_state.temp_api_key = ""
 if "temp_base_url" not in st.session_state:
@@ -57,7 +55,6 @@ class RiskDatabase:
     def get_all_knowledge(self) -> Dict[str, List[str]]:
         raise NotImplementedError
     def load_initial_data(self) -> None:
-        """加载初始风险数据和行业数据"""
         raise NotImplementedError
 
 # ================== SQLite 实现 ==================
@@ -148,7 +145,8 @@ class SQLiteDatabase(RiskDatabase):
         return self.knowledge
 
     def load_initial_data(self):
-        # 加载行业风险数据
+        cursor = self.conn.cursor()
+        # 行业数据
         industry_data = [
             ("LED", "LED路灯", "光衰过快", "结温过高", "优化散热设计", "IEC 62031"),
             ("LED", "LED路灯", "浪涌损坏", "雷击", "加装SPD", "IEC 61643-11"),
@@ -158,11 +156,10 @@ class SQLiteDatabase(RiskDatabase):
             ("宠物电器", "宠物饮水机", "水泵噪音", "叶轮磨损", "无刷水泵", "行业标准"),
             ("宠物电器", "宠物喂食器", "卡粮", "粮食受潮", "干燥剂", "行业实践"),
         ]
-        cursor = self.conn.cursor()
         cursor.execute("DELETE FROM industry_risks")
         for row in industry_data:
             cursor.execute("INSERT INTO industry_risks (category, product_type, failure_mode, cause, mitigation, source) VALUES (?,?,?,?,?,?)", row)
-        # 加载内置产品风险数据（如果为空）
+        # 内置风险
         cursor.execute("SELECT COUNT(*) FROM product_risks")
         if cursor.fetchone()[0] == 0:
             default_risks = [
@@ -190,71 +187,54 @@ class Neo4jDatabase(RiskDatabase):
             user = st.secrets.get("NEO4J_USERNAME", "neo4j")
             password = st.secrets.get("NEO4J_PASSWORD", "")
             if not uri or not password:
-                st.warning("Neo4j 凭证未配置，降级使用 SQLite")
                 return
             self.driver = GraphDatabase.driver(uri, auth=(user, password))
-            # 测试连接
             with self.driver.session() as session:
                 session.run("RETURN 1")
-        except Exception as e:
-            st.error(f"Neo4j 连接失败: {e}，将使用 SQLite 作为后备")
+        except Exception:
             self.driver = None
 
-    def _query(self, query, parameters=None):
+    def _query(self, query, params=None):
         if not self.driver:
             return []
         with self.driver.session() as session:
-            result = session.run(query, parameters or {})
+            result = session.run(query, params or {})
             return [record.data() for record in result]
 
     def get_risks(self, product_type: str) -> List[Dict]:
         if not self.driver:
-            return SQLiteDatabase().get_risks(product_type)
+            return []
         cypher = """
             MATCH (p:ProductType {name: $ptype})-[:HAS_RISK]->(r:Risk)
-            OPTIONAL MATCH (r)-[:MITIGATED_BY]->(m:Mitigation)
             RETURN r.module AS module, r.failure_mode AS failure_mode, r.cause AS cause,
                    r.severity AS severity, r.occurrence AS occurrence, r.detection AS detection,
-                   m.text AS mitigation
+                   r.mitigation AS mitigation
             LIMIT 10
         """
         results = self._query(cypher, {"ptype": product_type})
         risks = []
         for rec in results:
             risk = {
-                "module": rec["module"],
-                "failure_mode": rec["failure_mode"],
-                "cause": rec["cause"],
-                "severity": rec["severity"],
-                "occurrence": rec["occurrence"],
-                "detection": rec["detection"],
-                "mitigation": rec["mitigation"] or "无记录",
+                "module": rec.get("module"),
+                "failure_mode": rec.get("failure_mode"),
+                "cause": rec.get("cause"),
+                "severity": rec.get("severity"),
+                "occurrence": rec.get("occurrence"),
+                "detection": rec.get("detection"),
+                "mitigation": rec.get("mitigation", "（来自Neo4j）"),
+                "source": "Neo4j"
             }
-            risk["RPN"] = risk["severity"] * risk["occurrence"] * risk["detection"]
+            if all(k in risk for k in ["severity","occurrence","detection"]):
+                risk["RPN"] = risk["severity"] * risk["occurrence"] * risk["detection"]
             risks.append(risk)
-        return sorted(risks, key=lambda x: x["RPN"], reverse=True)[:10]
+        return sorted(risks, key=lambda x: x.get("RPN", 0), reverse=True)[:10]
 
     def get_product_decomposition(self, product_name: str, description: str) -> Dict:
-        # 从 Neo4j 中查询产品结构（简化，先用规则）
-        if not self.driver:
-            return SQLiteDatabase().get_product_decomposition(product_name, description)
-        cypher = """
-            MATCH (p:Product {name: $pname})-[:HAS_FUNCTION]->(f:FunctionUnit)
-            RETURN f.name AS fu
-        """
-        f_units = self._query(cypher, {"pname": product_name})
-        if f_units:
-            return {
-                "product_type": product_name,
-                "function_units": [fu["fu"] for fu in f_units],
-                "modules": []
-            }
-        else:
-            return SQLiteDatabase().get_product_decomposition(product_name, description)
+        return {}  # 暂不实现
 
     def get_mitigation(self, module: str, failure_mode: str) -> str:
         if not self.driver:
-            return "建议参考行业规范。"
+            return ""
         cypher = """
             MATCH (m:Module {name: $module})-[:HAS_FAILURE]->(f:FailureMode {name: $failure})
             OPTIONAL MATCH (f)-[:MITIGATED_BY]->(mit:Mitigation)
@@ -264,10 +244,9 @@ class Neo4jDatabase(RiskDatabase):
         results = self._query(cypher, {"module": module, "failure": failure_mode})
         if results and results[0].get("mitigation"):
             return results[0]["mitigation"]
-        return "未找到特定缓解措施。"
+        return ""
 
     def get_knowledge_by_category(self, category: str) -> List[str]:
-        # Neo4j 中知识库存储为 Knowledge 节点，带 category 属性
         if not self.driver:
             return []
         cypher = "MATCH (k:Knowledge {category: $cat}) RETURN k.content AS content"
@@ -309,43 +288,96 @@ class Neo4jDatabase(RiskDatabase):
         return knowledge
 
     def load_initial_data(self):
-        if not self.driver:
-            return
-        # 检查是否已有数据
-        cypher = "MATCH (p:ProductType) RETURN count(p) AS cnt"
-        results = self._query(cypher)
-        if results and results[0]["cnt"] > 0:
-            return
-        # 创建产品类型节点
-        product_types = ["LED路灯", "LED吸顶灯", "洗地机", "吸尘器", "宠物饮水机", "宠物喂食器"]
-        with self.driver.session() as session:
-            for pt in product_types:
-                session.run("MERGE (p:ProductType {name: $name})", {"name": pt})
-            # 创建风险节点示例
-            risks = [
-                ("LED路灯", "LED光源", "光衰过快", "结温过高", 8,7,5, "优化散热设计"),
-                ("LED路灯", "驱动电源", "电容鼓包", "高温",9,6,6, "选用长寿命电容"),
-                ("洗地机", "滚刷电机", "堵转烧毁", "毛发缠绕",8,7,6, "过流保护"),
-            ]
-            for pt, mod, fm, cause, s, o, d, mit in risks:
-                session.run("""
-                    MATCH (p:ProductType {name: $pt})
-                    MERGE (r:Risk {module: $mod, failure_mode: $fm, cause: $cause,
-                                   severity: $s, occurrence: $o, detection: $d})
-                    MERGE (p)-[:HAS_RISK]->(r)
-                """, {"pt": pt, "mod": mod, "fm": fm, "cause": cause, "s": s, "o": o, "d": d})
-                session.run("""
-                    MATCH (r:Risk {module: $mod, failure_mode: $fm})
-                    MERGE (m:Mitigation {text: $mit})
-                    MERGE (r)-[:MITIGATED_BY]->(m)
-                """, {"mod": mod, "fm": fm, "mit": mit})
+        # 可在此初始化 Neo4j 基础数据
+        pass
+
+# ================== 混合数据库（SQLite + Neo4j） ==================
+class HybridDatabase(RiskDatabase):
+    def __init__(self):
+        self.sqlite = SQLiteDatabase()
+        self.neo4j = Neo4jDatabase()
+        self.neo4j_available = self.neo4j.driver is not None
+
+    def get_risks(self, product_type: str) -> List[Dict]:
+        # 合并两个数据库的风险数据
+        risks_sql = self.sqlite.get_risks(product_type)
+        risks_neo = self.neo4j.get_risks(product_type) if self.neo4j_available else []
+        # 合并去重（按模块+失效模式）
+        seen = set()
+        merged = []
+        for r in risks_sql + risks_neo:
+            key = (r.get("module"), r.get("failure_mode"))
+            if key not in seen:
+                seen.add(key)
+                merged.append(r)
+        # 按 RPN 排序取前 10
+        merged.sort(key=lambda x: x.get("RPN", 0), reverse=True)
+        return merged[:10]
+
+    def get_product_decomposition(self, product_name: str, description: str) -> Dict:
+        # 优先使用 SQLite 的分解逻辑
+        return self.sqlite.get_product_decomposition(product_name, description)
+
+    def get_mitigation(self, module: str, failure_mode: str) -> str:
+        # 先查 SQLite 知识库，再查 Neo4j
+        sql_mit = self.sqlite.get_mitigation(module, failure_mode)
+        if sql_mit and "建议参考" not in sql_mit:
+            return sql_mit
+        neo_mit = self.neo4j.get_mitigation(module, failure_mode) if self.neo4j_available else ""
+        if neo_mit:
+            return neo_mit
+        return sql_mit
+
+    def get_knowledge_by_category(self, category: str) -> List[str]:
+        # 合并两个数据库的知识库条目
+        sql_kb = self.sqlite.get_knowledge_by_category(category)
+        neo_kb = self.neo4j.get_knowledge_by_category(category) if self.neo4j_available else []
+        # 合并去重
+        seen = set()
+        merged = []
+        for item in sql_kb + neo_kb:
+            if item not in seen:
+                seen.add(item)
+                merged.append(item)
+        return merged
+
+    def add_knowledge(self, category: str, content: str):
+        # 同时添加到两个数据库（如果 Neo4j 可用）
+        self.sqlite.add_knowledge(category, content)
+        if self.neo4j_available:
+            self.neo4j.add_knowledge(category, content)
+
+    def delete_knowledge(self, category: str, content: str):
+        self.sqlite.delete_knowledge(category, content)
+        if self.neo4j_available:
+            self.neo4j.delete_knowledge(category, content)
+
+    def clear_knowledge_category(self, category: str):
+        self.sqlite.clear_knowledge_category(category)
+        if self.neo4j_available:
+            self.neo4j.clear_knowledge_category(category)
+
+    def get_all_knowledge(self) -> Dict[str, List[str]]:
+        # 合并两个数据库的所有知识库
+        sql_all = self.sqlite.get_all_knowledge()
+        if not self.neo4j_available:
+            return sql_all
+        neo_all = self.neo4j.get_all_knowledge()
+        all_cats = set(sql_all.keys()) | set(neo_all.keys())
+        merged = {}
+        for cat in all_cats:
+            merged[cat] = list(set(sql_all.get(cat, []) + neo_all.get(cat, [])))
+        return merged
+
+    def load_initial_data(self):
+        self.sqlite.load_initial_data()
+        if self.neo4j_available:
+            self.neo4j.load_initial_data()
 
 # ================== 数据库工厂 ==================
-def get_database(db_type: str) -> RiskDatabase:
-    if db_type == "Neo4j":
-        return Neo4jDatabase()
-    else:
-        return SQLiteDatabase()
+def get_database() -> RiskDatabase:
+    # 默认使用混合数据库（SQLite + Neo4j）
+    return HybridDatabase()
 
 # ================== DeepSeek 客户端 ==================
 def get_openai_client():
@@ -404,11 +436,11 @@ def web_search(query: str, max_results=3) -> str:
 
 # ================== AI 分析（多数据源） ==================
 def generate_ai_analysis(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase) -> str:
-    # 从当前数据库获取知识库上下文（简化版）
+    # 获取融合后的知识库和风险数据
     all_knowledge = db.get_all_knowledge()
     kb_text = "\n".join([f"[{cat}] {item}" for cat, items in all_knowledge.items() for item in items[:3]])
-    internal_risks = db.get_risks(product_name)  # 获取匹配的风险
-    internal_text = "\n".join([f"- {r['module']}: {r['failure_mode']}（原因：{r['cause']}）" for r in internal_risks[:5]])
+    risks = db.get_risks(product_name)
+    internal_text = "\n".join([f"- {r['module']}: {r['failure_mode']}（原因：{r['cause']}）" for r in risks[:5]])
     web_context = ""
     if enable_web:
         with st.spinner("正在联网搜索..."):
@@ -420,10 +452,10 @@ def generate_ai_analysis(product_name: str, product_desc: str, enable_web: bool,
 产品名称：{product_name}
 设计描述：{product_desc}
 
-=== 企业内部知识库 ===
+=== 企业内部知识库（SQLite+Neo4j） ===
 {kb_text if kb_text else "暂无"}
 
-=== 内部产品风险数据库 ===
+=== 产品风险数据库（融合） ===
 {internal_text if internal_text else "暂无"}
 
 === 联网搜索结果 ===
@@ -445,7 +477,7 @@ def generate_mitigation_strategy(risk: Dict) -> str:
 2. **仿真验证**：热/结构/电路仿真验证余量。
 3. **测试标准**：参考 IEC/GB，增加可靠性测试。
 
-**RPN**：{risk['severity']} × {risk['occurrence']} × {risk['detection']} = **{risk['RPN']}**
+**RPN**：{risk.get('severity',0)} × {risk.get('occurrence',0)} × {risk.get('detection',0)} = **{risk.get('RPN',0)}**
 """
 
 # ================== 管理员设置弹窗 ==================
@@ -464,49 +496,61 @@ def admin_settings_dialog():
         return
 
     st.success("管理员已登录")
-    # 联网搜索开关
+    # 联网搜索开关（默认已开启，管理员可关闭）
     st.subheader("🌐 联网搜索配置")
     st.session_state.enable_web_search = st.checkbox("启用联网搜索", value=st.session_state.enable_web_search)
     st.markdown("---")
 
-    # 数据库切换
-    st.subheader("🗄️ 数据库配置")
-    db_option = st.selectbox("选择数据库", ["SQLite", "Neo4j"], index=0 if st.session_state.db_type=="SQLite" else 1)
-    if st.button("切换数据库"):
-        st.session_state.db_type = db_option
-        st.session_state.database = get_database(db_option)
-        # 确保初始数据存在
-        st.session_state.database.load_initial_data()
-        st.success(f"已切换到 {db_option} 数据库")
-        st.rerun()
-
+    # 显示当前数据库状态
+    st.subheader("🗄️ 数据库状态")
+    db = st.session_state.database
+    neo_available = hasattr(db, 'neo4j_available') and db.neo4j_available
+    st.json({
+        "当前模式": "混合数据库 (SQLite + Neo4j)",
+        "Neo4j 连接": "✅ 已连接" if neo_available else "⚠️ 未连接（仅使用 SQLite）",
+        "联网搜索": "启用" if st.session_state.enable_web_search else "禁用",
+        "DeepSeek API": "已配置" if (st.session_state.temp_api_key or st.secrets.get("DEEPSEEK_API_KEY")) else "未配置",
+    })
     st.markdown("---")
 
-    # 知识库管理（使用当前数据库）
+    # 知识库管理（使用当前数据库，支持滚动）
     st.subheader("📚 知识库管理")
     categories = ["光学", "机械", "材料", "热学", "电气", "控制"]
     selected_cat = st.selectbox("选择分类", categories)
-    items = st.session_state.database.get_knowledge_by_category(selected_cat)
+    items = db.get_knowledge_by_category(selected_cat)
     st.write(f"共 {len(items)} 条记录")
-    for idx, item in enumerate(items):
-        col1, col2 = st.columns([10,1])
-        with col1:
-            st.write(f"{idx+1}. {item[:100]}...")
-        with col2:
-            if st.button("❌", key=f"del_{selected_cat}_{idx}"):
-                st.session_state.database.delete_knowledge(selected_cat, item)
-                st.rerun()
+    # 每页显示 10 条，支持滚动
+    page_size = 10
+    total_pages = (len(items) + page_size - 1) // page_size if items else 1
+    if items:
+        page = st.number_input("页码", min_value=1, max_value=total_pages, value=1, step=1) - 1
+        start = page * page_size
+        end = min(start + page_size, len(items))
+        # 使用容器实现滚动
+        with st.container(height=400):
+            for idx in range(start, end):
+                col1, col2 = st.columns([10,1])
+                with col1:
+                    st.write(f"{idx+1}. {items[idx][:150]}..." if len(items[idx])>150 else f"{idx+1}. {items[idx]}")
+                with col2:
+                    if st.button("❌", key=f"del_{selected_cat}_{idx}"):
+                        db.delete_knowledge(selected_cat, items[idx])
+                        st.rerun()
+        if total_pages > 1:
+            st.caption(f"第 {page+1} / {total_pages} 页")
+    else:
+        st.info("暂无条目")
     new_item = st.text_area("添加新经验教训", height=100)
     if st.button("添加条目"):
         if new_item.strip():
-            st.session_state.database.add_knowledge(selected_cat, new_item.strip())
+            db.add_knowledge(selected_cat, new_item.strip())
             st.rerun()
 
     st.markdown("---")
     # Excel 导入导出
     st.subheader("📥 导出/导入知识库（Excel）")
     if st.button("下载知识库模板 (Excel)"):
-        all_knowledge = st.session_state.database.get_all_knowledge()
+        all_knowledge = db.get_all_knowledge()
         export_data = {}
         for cat in categories:
             export_data[cat] = ["\n".join(all_knowledge.get(cat, []))] if all_knowledge.get(cat) else [""]
@@ -524,10 +568,9 @@ def admin_settings_dialog():
                     cell = df[cat].iloc[0]
                     if isinstance(cell, str) and cell.strip():
                         entries = [line.strip() for line in cell.split("\n") if line.strip()]
-                        # 清空分类后批量添加
-                        st.session_state.database.clear_knowledge_category(cat)
+                        db.clear_knowledge_category(cat)
                         for entry in entries:
-                            st.session_state.database.add_knowledge(cat, entry)
+                            db.add_knowledge(cat, entry)
             st.success("知识库已更新")
             st.rerun()
         except Exception as e:
@@ -544,15 +587,6 @@ def admin_settings_dialog():
         st.session_state.temp_base_url = new_url
         st.session_state.temp_model = new_model
         st.rerun()
-
-    st.markdown("---")
-    # 数据库状态
-    st.subheader("🗄️ 连接状态")
-    st.json({
-        "当前数据库": st.session_state.db_type,
-        "联网搜索": "启用" if st.session_state.enable_web_search else "禁用",
-        "DeepSeek": "已配置" if (st.session_state.temp_api_key or st.secrets.get("DEEPSEEK_API_KEY")) else "未配置",
-    })
 
 # ================== 右上角按钮 ==================
 col_left, col_spacer, col_zh, col_en, col_gear = st.columns([5, 3, 1, 1, 1])
@@ -588,7 +622,7 @@ TEXTS = {
         "product_desc": "设计描述",
         "product_desc_ph": "例如：200W COB光源，主动风扇散热，IP65",
         "analyze_btn_ai": "🚀 开始 AI 深度分析 (DeepSeek)",
-        "analyze_btn_quick": "⚡ 快速分析 (本地知识库)",
+        "analyze_btn_quick": "⚡ 快速分析 (融合数据库)",
         "product_name_missing": "请填写产品名称",
         "generating": "AI 正在分析中，请稍候...",
         "decomposition_title": "📐 产品分解结果",
@@ -598,8 +632,7 @@ TEXTS = {
         "footer": "© 2026 Laurence Ku | AI+DQA 风险分析",
         "no_risks": "未检索到风险数据，请检查产品类型或先加载基础数据。",
         "db_status": "数据库状态",
-        "db_connected": "✅ 已连接",
-        "db_disconnected": "⚠️ 连接失败",
+        "db_connected": "✅ 混合模式 (SQLite + Neo4j)",
     },
     "en": {
         "title": "🔍 AI+DQA Product Risk Analysis",
@@ -619,7 +652,7 @@ TEXTS = {
         "product_desc": "Design Description",
         "product_desc_ph": "e.g., 200W COB, active fan cooling, IP65",
         "analyze_btn_ai": "🚀 Start AI Deep Analysis (DeepSeek)",
-        "analyze_btn_quick": "⚡ Quick Analysis (Local DB)",
+        "analyze_btn_quick": "⚡ Quick Analysis (Hybrid DB)",
         "product_name_missing": "Please enter product name",
         "generating": "AI is analyzing, please wait...",
         "decomposition_title": "📐 Product Decomposition",
@@ -629,8 +662,7 @@ TEXTS = {
         "footer": "© 2026 Laurence Ku | AI+DQA Risk Analysis",
         "no_risks": "No risk data found. Please check product type or load base data first.",
         "db_status": "Database Status",
-        "db_connected": "✅ Connected",
-        "db_disconnected": "⚠️ Disconnected",
+        "db_connected": "✅ Hybrid Mode (SQLite + Neo4j)",
     }
 }
 
@@ -639,9 +671,9 @@ t = TEXTS[lang]
 
 st.title(t["title"])
 
-# 初始化全局数据库实例
+# 初始化全局数据库实例（混合模式）
 if "database" not in st.session_state:
-    st.session_state.database = get_database(st.session_state.db_type)
+    st.session_state.database = get_database()
     st.session_state.database.load_initial_data()
 
 # ================== 侧边栏 ==================
@@ -667,7 +699,7 @@ with st.sidebar:
         st.error(t["api_not_configured"])
     st.markdown("---")
     st.markdown(f"**{t['db_status']}**")
-    st.info(f"当前数据库: {st.session_state.db_type}")
+    st.info(t["db_connected"])
     st.markdown("---")
     st.markdown(t["contact_info"])
 
@@ -706,8 +738,10 @@ if ai_analyze or quick_analyze:
                 col_c.metric("主要模块", ", ".join(decomposition.get("modules", [])[:3]))
                 st.subheader(t["risks_title"])
                 df = pd.DataFrame(risks)
-                df["RPN"] = df["severity"] * df["occurrence"] * df["detection"]
-                df = df.sort_values("RPN", ascending=False)
+                # 确保所有必要列存在
+                for col in ["module","failure_mode","cause","severity","occurrence","detection","RPN"]:
+                    if col not in df.columns:
+                        df[col] = ""
                 st.dataframe(df[["module","failure_mode","cause","severity","occurrence","detection","RPN"]], use_container_width=True)
                 st.subheader(t["strategy_title"])
                 for idx, risk in df.iterrows():
