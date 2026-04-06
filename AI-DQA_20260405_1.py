@@ -14,36 +14,73 @@ from neo4j import GraphDatabase
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# 自定义CSS：统一所有主要按钮（中英文、主按钮）为红色突出风格，主按钮更大且居中
+# 自定义CSS：主按钮突出，齿轮按钮保持原样
 st.markdown("""
 <style>
-    /* 所有主要按钮（包括语言按钮和主按钮） */
-    .stButton button {
-        font-size: 20px !important;
+    /* 中文、English 按钮样式（红色突出） */
+    div[data-testid="column"]:nth-of-type(2) button, 
+    div[data-testid="column"]:nth-of-type(3) button {
+        font-size: 18px !important;
         font-weight: bold !important;
-        padding: 0.6rem 1.5rem !important;
+        padding: 0.5rem 1.2rem !important;
         background-color: #ff4b4b !important;
         color: white !important;
         border-radius: 40px !important;
         border: none !important;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.2) !important;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2) !important;
         transition: all 0.3s ease !important;
     }
-    .stButton button:hover {
+    div[data-testid="column"]:nth-of-type(2) button:hover,
+    div[data-testid="column"]:nth-of-type(3) button:hover {
         transform: scale(1.02);
         background-color: #e03a3a !important;
-        box-shadow: 0 6px 12px rgba(0,0,0,0.3);
     }
-    /* 主分析按钮额外放大 */
+    
+    /* 齿轮按钮（第5列）恢复默认样式 */
+    div[data-testid="column"]:nth-of-type(5) button {
+        background-color: transparent !important;
+        color: #31333f !important;
+        font-size: 20px !important;
+        padding: 0.25rem 0.5rem !important;
+        border-radius: 8px !important;
+        box-shadow: none !important;
+        border: 1px solid #ccc !important;
+    }
+    div[data-testid="column"]:nth-of-type(5) button:hover {
+        background-color: #f0f2f6 !important;
+        transform: none !important;
+    }
+    
+    /* 主分析按钮：居中、放大、增高 */
+    .main-analyze {
+        text-align: center;
+        margin: 25px 0 15px 0;
+    }
     .main-analyze button {
-        font-size: 28px !important;
-        padding: 0.8rem 2.5rem !important;
+        font-size: 32px !important;
+        font-weight: bold !important;
+        padding: 16px 40px !important;
+        background-color: #ff4b4b !important;
+        color: white !important;
+        border-radius: 60px !important;
+        border: none !important;
+        box-shadow: 0 6px 12px rgba(0,0,0,0.3) !important;
+        transition: all 0.3s ease !important;
+        width: auto !important;
+        min-width: 320px !important;
     }
-    /* 侧边栏按钮恢复默认样式，避免干扰 */
+    .main-analyze button:hover {
+        transform: scale(1.03);
+        background-color: #e03a3a !important;
+        box-shadow: 0 8px 16px rgba(0,0,0,0.4);
+    }
+    
+    /* 侧边栏按钮保持原样 */
     section[data-testid="stSidebar"] .stButton button {
         background-color: #f0f2f6 !important;
         color: #31333f !important;
-        font-size: 16px !important;
+        font-size: 14px !important;
+        border-radius: 8px !important;
         box-shadow: none !important;
     }
     section[data-testid="stSidebar"] .stButton button:hover {
@@ -714,7 +751,7 @@ with col1:
 with col2:
     product_desc = st.text_area(t["product_desc"], placeholder=t["product_desc_ph"], height=100)
 
-# 主分析按钮：居中、放大
+# 主分析按钮：居中、放大、增高
 col_center = st.columns([1, 2, 1])[1]
 with col_center:
     st.markdown('<div class="main-analyze">', unsafe_allow_html=True)
