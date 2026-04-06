@@ -18,14 +18,21 @@ from docx.oxml.ns import qn
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# 自定义CSS：报告铺满、与输入框等宽、按钮样式等
+# 自定义CSS：桌面端铺满宽度
 st.markdown("""
 <style>
-    /* 主容器占满宽度，移除默认最大宽度 */
+    /* 主容器基础样式 */
     .main .block-container {
         max-width: 100% !important;
         padding-left: 1rem !important;
         padding-right: 1rem !important;
+    }
+    /* 桌面端（宽度大于992px）进一步拉宽 */
+    @media (min-width: 992px) {
+        .main .block-container {
+            padding-left: 2rem !important;
+            padding-right: 2rem !important;
+        }
     }
     /* 所有Markdown内容强制100%宽度 */
     .stMarkdown, .stMarkdown div, .stMarkdown p, .stMarkdown table {
@@ -41,7 +48,7 @@ st.markdown("""
     .stTextInput > div, .stTextArea > div {
         width: 100% !important;
     }
-    /* 表格自适应，允许水平滚动 */
+    /* 表格自适应 */
     .stMarkdown table {
         display: table !important;
         overflow-x: auto;
@@ -525,23 +532,32 @@ def web_search(query: str, max_results=3) -> str:
     except Exception as e:
         return f"搜索失败: {str(e)}"
 
-# ================== Markdown 转 Word ==================
+# ================== Markdown 转 Word（清理格式） ==================
+def clean_markdown_text(text: str) -> str:
+    """移除 ** 和 <br> 标签"""
+    # 移除 ** 粗体标记
+    text = re.sub(r'\*\*', '', text)
+    # 将 <br> 替换为换行
+    text = re.sub(r'<br\s*/?>', '\n', text)
+    return text
+
 def markdown_to_docx(md_text: str, doc: Document):
+    """将 Markdown 文本转换为 Word 文档内容，并清理格式"""
     lines = md_text.split('\n')
     i = 0
     in_table = False
     while i < len(lines):
         line = lines[i].strip()
         if line.startswith('# '):
-            doc.add_heading(line[2:], level=1)
+            doc.add_heading(clean_markdown_text(line[2:]), level=1)
             i += 1
             continue
         if line.startswith('## '):
-            doc.add_heading(line[3:], level=2)
+            doc.add_heading(clean_markdown_text(line[3:]), level=2)
             i += 1
             continue
         if line.startswith('### '):
-            doc.add_heading(line[4:], level=3)
+            doc.add_heading(clean_markdown_text(line[4:]), level=3)
             i += 1
             continue
         if line.startswith('|') and not in_table:
@@ -551,7 +567,7 @@ def markdown_to_docx(md_text: str, doc: Document):
                 table_lines.append(lines[i].strip())
                 i += 1
             if len(table_lines) >= 2:
-                header_cells = [cell.strip() for cell in table_lines[0].split('|')[1:-1]]
+                header_cells = [clean_markdown_text(cell.strip()) for cell in table_lines[0].split('|')[1:-1]]
                 if '---' in table_lines[1]:
                     data_lines = table_lines[2:]
                 else:
@@ -566,7 +582,7 @@ def markdown_to_docx(md_text: str, doc: Document):
                             for run in paragraph.runs:
                                 run.font.bold = True
                     for row_idx, data_line in enumerate(data_lines):
-                        cells = [cell.strip() for cell in data_line.split('|')[1:-1]]
+                        cells = [clean_markdown_text(cell.strip()) for cell in data_line.split('|')[1:-1]]
                         for col_idx, cell_text in enumerate(cells):
                             if col_idx < num_cols:
                                 table.cell(row_idx+1, col_idx).text = cell_text
@@ -574,14 +590,7 @@ def markdown_to_docx(md_text: str, doc: Document):
             in_table = False
             continue
         if line:
-            p = doc.add_paragraph()
-            parts = re.split(r'(\*\*.*?\*\*)', line)
-            for part in parts:
-                if part.startswith('**') and part.endswith('**'):
-                    run = p.add_run(part[2:-2])
-                    run.font.bold = True
-                else:
-                    p.add_run(part)
+            p = doc.add_paragraph(clean_markdown_text(line))
             for run in p.runs:
                 run.font.name = '宋体'
                 run._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
@@ -589,8 +598,8 @@ def markdown_to_docx(md_text: str, doc: Document):
             doc.add_paragraph()
         i += 1
 
-# ================== AI 分析（双语报告，强制显示分析人） ==================
-def generate_ai_analysis(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase, analyst_name: str, analyst_title: str) -> str:
+# ================== AI 分析（不包含头部，只输出报告内容） ==================
+def generate_ai_analysis_content(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase) -> str:
     all_knowledge = db.get_all_knowledge()
     lang = st.session_state.lang
     kb_text = "\n".join([f"[{cat}] {item}" for cat, items in all_knowledge.items() for item in items[:3]])
@@ -601,17 +610,7 @@ def generate_ai_analysis(product_name: str, product_desc: str, enable_web: bool,
         with st.spinner("正在联网搜索..."):
             web_context = web_search(f"{product_name} 失效 案例", max_results=3)
     
-    # 构建作者信息（强制显示分析人，若未填则显示AI生成）
-    if lang == "zh":
-        if analyst_name and analyst_name.strip():
-            if analyst_title and analyst_title.strip():
-                author_info = f"分析人：{analyst_name.strip()} ({analyst_title.strip()})"
-            else:
-                author_info = f"分析人：{analyst_name.strip()}"
-        else:
-            author_info = "AI生成的风险分析报告"
-        disclaimer = "此报告是基于以上提供的有限信息，结合行业数据库和联网搜索结果生成的初步分析，仅供参考。"
-        prompt = f"""
+    prompt = f"""
 你是一位资深可靠性工程师。请根据以下信息对产品进行风险分析。
 
 产品名称：{product_name}
@@ -626,77 +625,57 @@ def generate_ai_analysis(product_name: str, product_desc: str, enable_web: bool,
 === 联网搜索结果 ===
 {web_context if web_context else "未启用"}
 
-请输出 Markdown 格式报告。报告必须以以下两行开头（不要添加额外说明）：
-
-{author_info}
-
-{disclaimer}
-
-然后继续输出：
+请输出 Markdown 格式报告，包含：
 ### 1. 产品分解
 ### 2. Top 5 潜在风险（表格：模块、失效模式、原因、严重度、发生度、探测度、RPN）
 ### 3. 关键风险缓解策略（针对RPN最高的3项）
-"""
-    else:
-        if analyst_name and analyst_name.strip():
-            if analyst_title and analyst_title.strip():
-                author_info = f"Analyst: {analyst_name.strip()} ({analyst_title.strip()})"
-            else:
-                author_info = f"Analyst: {analyst_name.strip()}"
-        else:
-            author_info = "AI-generated Risk Analysis Report"
-        disclaimer = "This report is a preliminary analysis based on the limited information provided above, combined with industry databases and online search results. It is for reference only."
-        prompt = f"""
-You are a senior reliability engineer. Perform a risk analysis on the following product.
 
-Product Name: {product_name}
-Design Description: {product_desc}
-
-=== Internal Knowledge Base ===
-{kb_text if kb_text else "None"}
-
-=== Product Risk Database ===
-{internal_text if internal_text else "None"}
-
-=== Online Search Results ===
-{web_context if web_context else "Not enabled"}
-
-Output a Markdown report. The report must start with the following two lines (do not add extra explanation):
-
-{author_info}
-
-{disclaimer}
-
-Then continue with:
-### 1. Product Decomposition
-### 2. Top 5 Potential Risks (table: Module, Failure Mode, Cause, Severity, Occurrence, Detection, RPN)
-### 3. Key Risk Mitigation Strategies (for the top 3 RPN items)
+注意：表格中的模块名称不要加粗，不要出现 ** 符号。
 """
     return call_deepseek(prompt, max_tokens=4000)
 
-def generate_mitigation_strategy(risk: Dict) -> str:
-    base = risk.get("mitigation", "建议参考行业规范。")
-    lang = st.session_state.lang
-    if lang == "zh":
-        return f"""
-针对 **{risk['module']}** 的 **{risk['failure_mode']}** 问题，建议如下策略：
-
-1. **设计层面**：{base}
-2. **仿真验证**：热/结构/电路仿真验证余量。
-3. **测试标准**：参考 IEC/GB，增加可靠性测试。
-
-**RPN**：{risk.get('severity',0)} × {risk.get('occurrence',0)} × {risk.get('detection',0)} = **{risk.get('RPN',0)}**
-"""
-    else:
-        return f"""
-For the **{risk['module']}** issue **{risk['failure_mode']}** (cause: {risk['cause']}), the following strategies are recommended:
-
-1. **Design**: {base}
-2. **Simulation**: Thermal/structure/circuit simulation to verify margins.
-3. **Testing**: Refer to IEC/GB standards, add reliability tests.
-
-**RPN**: {risk.get('severity',0)} × {risk.get('occurrence',0)} × {risk.get('detection',0)} = **{risk.get('RPN',0)}**
-"""
+# ================== 生成 Word 报告（专业格式） ==================
+def generate_word_report(product_name: str, product_desc: str, analyst_name: str, analyst_title: str, report_content: str) -> BytesIO:
+    doc = Document()
+    # 设置页面边距
+    for section in doc.sections:
+        section.top_margin = Inches(1)
+        section.bottom_margin = Inches(1)
+        section.left_margin = Inches(1)
+        section.right_margin = Inches(1)
+    
+    # 标题
+    title = doc.add_heading("产品风险分析系统", level=1)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    # 报告网址
+    url_para = doc.add_paragraph("报告在线地址：")
+    url_para.add_run("https://ai-app-design-dfmea.streamlit.app/").italic = True
+    doc.add_paragraph()
+    
+    # 报告信息表格
+    info_table = doc.add_table(rows=4, cols=2)
+    info_table.style = 'Table Grid'
+    info_table.cell(0, 0).text = "产品名称"
+    info_table.cell(0, 1).text = product_name
+    info_table.cell(1, 0).text = "设计描述"
+    info_table.cell(1, 1).text = product_desc
+    info_table.cell(2, 0).text = "报告日期"
+    info_table.cell(2, 1).text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    analyst_str = analyst_name if analyst_name else "未填写"
+    if analyst_title:
+        analyst_str += f" ({analyst_title})"
+    info_table.cell(3, 0).text = "分析人"
+    info_table.cell(3, 1).text = analyst_str
+    doc.add_paragraph()
+    
+    # 报告正文
+    markdown_to_docx(report_content, doc)
+    
+    doc_bytes = BytesIO()
+    doc.save(doc_bytes)
+    doc_bytes.seek(0)
+    return doc_bytes
 
 # ================== 管理员设置弹窗 ==================
 @st.dialog("管理员设置", width="large")
@@ -928,33 +907,31 @@ with col_center:
         else:
             db = st.session_state.database
             with st.spinner(t["generating"]):
-                report = generate_ai_analysis(product_name, product_desc, st.session_state.enable_web_search, db, analyst_name, analyst_title)
+                # 生成报告内容（不含头部）
+                report_content = generate_ai_analysis_content(product_name, product_desc, st.session_state.enable_web_search, db)
+                
+                # 页面显示：手动添加分析人和免责声明
+                if analyst_name and analyst_name.strip():
+                    if analyst_title and analyst_title.strip():
+                        author_line = f"分析人：{analyst_name.strip()} ({analyst_title.strip()})"
+                    else:
+                        author_line = f"分析人：{analyst_name.strip()}"
+                else:
+                    author_line = "AI生成的风险分析报告"
+                disclaimer_line = "此报告是基于以上提供的有限信息，结合行业数据库和联网搜索结果生成的初步分析，仅供参考。"
+                full_report_display = f"{author_line}\n\n{disclaimer_line}\n\n{report_content}"
                 st.markdown("### 🤖 AI 生成的风险分析报告")
-                st.markdown(report)
-                if report:
-                    try:
-                        doc = Document()
-                        for section in doc.sections:
-                            section.top_margin = Inches(1)
-                            section.bottom_margin = Inches(1)
-                            section.left_margin = Inches(1)
-                            section.right_margin = Inches(1)
-                        title_para = doc.add_heading(t["title"], level=1)
-                        title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        doc.add_paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                        doc.add_paragraph()
-                        markdown_to_docx(report, doc)
-                        doc_bytes = BytesIO()
-                        doc.save(doc_bytes)
-                        doc_bytes.seek(0)
-                        st.download_button(
-                            label="📥 Download Word Report" if lang == "en" else "📥 下载 Word 报告",
-                            data=doc_bytes,
-                            file_name=f"{product_name}_Risk_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        )
-                    except Exception as e:
-                        st.error(f"生成 Word 文档失败: {e}")
+                st.markdown(full_report_display)
+                
+                # Word 下载：使用专业格式
+                if report_content:
+                    word_bytes = generate_word_report(product_name, product_desc, analyst_name, analyst_title, report_content)
+                    st.download_button(
+                        label="📥 下载 Word 报告",
+                        data=word_bytes,
+                        file_name=f"{product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
     st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("---")
