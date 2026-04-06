@@ -14,40 +14,41 @@ from neo4j import GraphDatabase
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# 自定义CSS突出按钮
+# 自定义CSS：统一所有主要按钮（中英文、主按钮）为红色突出风格，主按钮更大且居中
 st.markdown("""
 <style>
-    /* 右上角语言按钮样式 */
-    div[data-testid="column"]:nth-of-type(2) button, div[data-testid="column"]:nth-of-type(3) button {
-        font-size: 18px !important;
+    /* 所有主要按钮（包括语言按钮和主按钮） */
+    .stButton button {
+        font-size: 20px !important;
         font-weight: bold !important;
-        padding: 0.5rem 1.2rem !important;
-        background-color: #f0f2f6 !important;
-        border-radius: 20px !important;
-        border: 1px solid #ccc !important;
-    }
-    /* 主分析按钮样式 */
-    .main-button button {
-        font-size: 22px !important;
-        font-weight: bold !important;
-        padding: 0.75rem 2rem !important;
+        padding: 0.6rem 1.5rem !important;
         background-color: #ff4b4b !important;
         color: white !important;
         border-radius: 40px !important;
+        border: none !important;
         box-shadow: 0 4px 8px rgba(0,0,0,0.2) !important;
         transition: all 0.3s ease !important;
-        width: auto !important;
-        min-width: 280px !important;
     }
-    .main-button button:hover {
+    .stButton button:hover {
         transform: scale(1.02);
         background-color: #e03a3a !important;
         box-shadow: 0 6px 12px rgba(0,0,0,0.3);
     }
-    /* 调整列间距 */
-    .main-button {
-        text-align: center;
-        margin: 20px 0;
+    /* 主分析按钮额外放大 */
+    .main-analyze button {
+        font-size: 28px !important;
+        padding: 0.8rem 2.5rem !important;
+    }
+    /* 侧边栏按钮恢复默认样式，避免干扰 */
+    section[data-testid="stSidebar"] .stButton button {
+        background-color: #f0f2f6 !important;
+        color: #31333f !important;
+        font-size: 16px !important;
+        box-shadow: none !important;
+    }
+    section[data-testid="stSidebar"] .stButton button:hover {
+        background-color: #e0e2e6 !important;
+        transform: none !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -713,9 +714,10 @@ with col1:
 with col2:
     product_desc = st.text_area(t["product_desc"], placeholder=t["product_desc_ph"], height=100)
 
-# 突出显示的分析按钮
+# 主分析按钮：居中、放大
 col_center = st.columns([1, 2, 1])[1]
 with col_center:
+    st.markdown('<div class="main-analyze">', unsafe_allow_html=True)
     if st.button(t["analyze_btn"], type="primary", key="main_analyze"):
         if not product_name:
             st.error(t["product_name_missing"])
@@ -725,6 +727,7 @@ with col_center:
                 report = generate_ai_analysis(product_name, product_desc, st.session_state.enable_web_search, db)
                 st.markdown("### 🤖 AI 生成的风险分析报告")
                 st.markdown(report)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("---")
 st.caption(t["footer"])
