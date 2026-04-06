@@ -24,7 +24,7 @@ if "enable_web_search" not in st.session_state:
 if "translation_cache" not in st.session_state:
     st.session_state.translation_cache = {}
 
-# LLM 临时覆盖配置（仅管理员可修改，但默认从 secrets 读取）
+# LLM 临时覆盖配置
 if "temp_api_key" not in st.session_state:
     st.session_state.temp_api_key = ""
 if "temp_base_url" not in st.session_state:
@@ -288,7 +288,6 @@ class Neo4jDatabase(RiskDatabase):
         return knowledge
 
     def load_initial_data(self):
-        # 可在此初始化 Neo4j 基础数据
         pass
 
 # ================== 混合数据库（SQLite + Neo4j） ==================
@@ -299,10 +298,8 @@ class HybridDatabase(RiskDatabase):
         self.neo4j_available = self.neo4j.driver is not None
 
     def get_risks(self, product_type: str) -> List[Dict]:
-        # 合并两个数据库的风险数据
         risks_sql = self.sqlite.get_risks(product_type)
         risks_neo = self.neo4j.get_risks(product_type) if self.neo4j_available else []
-        # 合并去重（按模块+失效模式）
         seen = set()
         merged = []
         for r in risks_sql + risks_neo:
@@ -310,16 +307,13 @@ class HybridDatabase(RiskDatabase):
             if key not in seen:
                 seen.add(key)
                 merged.append(r)
-        # 按 RPN 排序取前 10
         merged.sort(key=lambda x: x.get("RPN", 0), reverse=True)
         return merged[:10]
 
     def get_product_decomposition(self, product_name: str, description: str) -> Dict:
-        # 优先使用 SQLite 的分解逻辑
         return self.sqlite.get_product_decomposition(product_name, description)
 
     def get_mitigation(self, module: str, failure_mode: str) -> str:
-        # 先查 SQLite 知识库，再查 Neo4j
         sql_mit = self.sqlite.get_mitigation(module, failure_mode)
         if sql_mit and "建议参考" not in sql_mit:
             return sql_mit
@@ -329,10 +323,8 @@ class HybridDatabase(RiskDatabase):
         return sql_mit
 
     def get_knowledge_by_category(self, category: str) -> List[str]:
-        # 合并两个数据库的知识库条目
         sql_kb = self.sqlite.get_knowledge_by_category(category)
         neo_kb = self.neo4j.get_knowledge_by_category(category) if self.neo4j_available else []
-        # 合并去重
         seen = set()
         merged = []
         for item in sql_kb + neo_kb:
@@ -342,7 +334,6 @@ class HybridDatabase(RiskDatabase):
         return merged
 
     def add_knowledge(self, category: str, content: str):
-        # 同时添加到两个数据库（如果 Neo4j 可用）
         self.sqlite.add_knowledge(category, content)
         if self.neo4j_available:
             self.neo4j.add_knowledge(category, content)
@@ -358,7 +349,6 @@ class HybridDatabase(RiskDatabase):
             self.neo4j.clear_knowledge_category(category)
 
     def get_all_knowledge(self) -> Dict[str, List[str]]:
-        # 合并两个数据库的所有知识库
         sql_all = self.sqlite.get_all_knowledge()
         if not self.neo4j_available:
             return sql_all
@@ -376,7 +366,6 @@ class HybridDatabase(RiskDatabase):
 
 # ================== 数据库工厂 ==================
 def get_database() -> RiskDatabase:
-    # 默认使用混合数据库（SQLite + Neo4j）
     return HybridDatabase()
 
 # ================== DeepSeek 客户端 ==================
@@ -436,7 +425,6 @@ def web_search(query: str, max_results=3) -> str:
 
 # ================== AI 分析（多数据源） ==================
 def generate_ai_analysis(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase) -> str:
-    # 获取融合后的知识库和风险数据
     all_knowledge = db.get_all_knowledge()
     kb_text = "\n".join([f"[{cat}] {item}" for cat, items in all_knowledge.items() for item in items[:3]])
     risks = db.get_risks(product_name)
@@ -496,12 +484,12 @@ def admin_settings_dialog():
         return
 
     st.success("管理员已登录")
-    # 联网搜索开关（默认已开启，管理员可关闭）
+    # 联网搜索开关
     st.subheader("🌐 联网搜索配置")
     st.session_state.enable_web_search = st.checkbox("启用联网搜索", value=st.session_state.enable_web_search)
     st.markdown("---")
 
-    # 显示当前数据库状态
+    # 数据库状态
     st.subheader("🗄️ 数据库状态")
     db = st.session_state.database
     neo_available = hasattr(db, 'neo4j_available') and db.neo4j_available
@@ -513,31 +501,25 @@ def admin_settings_dialog():
     })
     st.markdown("---")
 
-    # 知识库管理（使用当前数据库，支持滚动）
+    # 知识库管理（滚动显示所有条目，无页码）
     st.subheader("📚 知识库管理")
     categories = ["光学", "机械", "材料", "热学", "电气", "控制"]
     selected_cat = st.selectbox("选择分类", categories)
     items = db.get_knowledge_by_category(selected_cat)
     st.write(f"共 {len(items)} 条记录")
-    # 每页显示 10 条，支持滚动
-    page_size = 10
-    total_pages = (len(items) + page_size - 1) // page_size if items else 1
     if items:
-        page = st.number_input("页码", min_value=1, max_value=total_pages, value=1, step=1) - 1
-        start = page * page_size
-        end = min(start + page_size, len(items))
-        # 使用容器实现滚动
+        # 使用固定高度容器滚动显示所有条目
         with st.container(height=400):
-            for idx in range(start, end):
+            for idx, item in enumerate(items):
                 col1, col2 = st.columns([10,1])
                 with col1:
-                    st.write(f"{idx+1}. {items[idx][:150]}..." if len(items[idx])>150 else f"{idx+1}. {items[idx]}")
+                    # 截取前150字符避免过长
+                    display_item = item[:150] + "..." if len(item) > 150 else item
+                    st.write(f"{idx+1}. {display_item}")
                 with col2:
                     if st.button("❌", key=f"del_{selected_cat}_{idx}"):
-                        db.delete_knowledge(selected_cat, items[idx])
+                        db.delete_knowledge(selected_cat, item)
                         st.rerun()
-        if total_pages > 1:
-            st.caption(f"第 {page+1} / {total_pages} 页")
     else:
         st.info("暂无条目")
     new_item = st.text_area("添加新经验教训", height=100)
@@ -622,7 +604,6 @@ TEXTS = {
         "product_desc": "设计描述",
         "product_desc_ph": "例如：200W COB光源，主动风扇散热，IP65",
         "analyze_btn_ai": "🚀 开始 AI 深度分析 (DeepSeek)",
-        "analyze_btn_quick": "⚡ 快速分析 (融合数据库)",
         "product_name_missing": "请填写产品名称",
         "generating": "AI 正在分析中，请稍候...",
         "decomposition_title": "📐 产品分解结果",
@@ -652,7 +633,6 @@ TEXTS = {
         "product_desc": "Design Description",
         "product_desc_ph": "e.g., 200W COB, active fan cooling, IP65",
         "analyze_btn_ai": "🚀 Start AI Deep Analysis (DeepSeek)",
-        "analyze_btn_quick": "⚡ Quick Analysis (Hybrid DB)",
         "product_name_missing": "Please enter product name",
         "generating": "AI is analyzing, please wait...",
         "decomposition_title": "📐 Product Decomposition",
@@ -671,7 +651,7 @@ t = TEXTS[lang]
 
 st.title(t["title"])
 
-# 初始化全局数据库实例（混合模式）
+# 初始化全局数据库实例
 if "database" not in st.session_state:
     st.session_state.database = get_database()
     st.session_state.database.load_initial_data()
@@ -703,7 +683,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown(t["contact_info"])
 
-# ================== 主界面 ==================
+# ================== 主界面（只有一个AI分析按钮） ==================
 st.markdown(f"### {t['input_title']}")
 col1, col2 = st.columns(2)
 with col1:
@@ -711,47 +691,16 @@ with col1:
 with col2:
     product_desc = st.text_area(t["product_desc"], placeholder=t["product_desc_ph"], height=100)
 
-col_btn1, col_btn2 = st.columns(2)
-with col_btn1:
-    ai_analyze = st.button(t["analyze_btn_ai"], type="primary", use_container_width=True)
-with col_btn2:
-    quick_analyze = st.button(t["analyze_btn_quick"], use_container_width=True)
-
-if ai_analyze or quick_analyze:
+# 只保留 AI 深度分析按钮
+if st.button(t["analyze_btn_ai"], type="primary", use_container_width=True):
     if not product_name:
         st.error(t["product_name_missing"])
     else:
         db = st.session_state.database
-        if ai_analyze:
-            with st.spinner(t["generating"]):
-                report = generate_ai_analysis(product_name, product_desc, st.session_state.enable_web_search, db)
-                st.markdown("### 🤖 AI 生成的风险分析报告")
-                st.markdown(report)
-        else:
-            decomposition = db.get_product_decomposition(product_name, product_desc)
-            risks = db.get_risks(decomposition.get("product_type", "default"))
-            if risks:
-                st.subheader(t["decomposition_title"])
-                col_a, col_b, col_c = st.columns(3)
-                col_a.metric("产品", product_name)
-                col_b.metric("功能件", ", ".join(decomposition.get("function_units", [])))
-                col_c.metric("主要模块", ", ".join(decomposition.get("modules", [])[:3]))
-                st.subheader(t["risks_title"])
-                df = pd.DataFrame(risks)
-                # 确保所有必要列存在
-                for col in ["module","failure_mode","cause","severity","occurrence","detection","RPN"]:
-                    if col not in df.columns:
-                        df[col] = ""
-                st.dataframe(df[["module","failure_mode","cause","severity","occurrence","detection","RPN"]], use_container_width=True)
-                st.subheader(t["strategy_title"])
-                for idx, risk in df.iterrows():
-                    with st.expander(f"{idx+1}. {risk['module']} - {risk['failure_mode']} (RPN={risk['RPN']})"):
-                        strategy = generate_mitigation_strategy(risk)
-                        st.markdown(strategy)
-                csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button(t["download_btn"], data=csv, file_name=f"{product_name}_risks.csv", mime="text/csv")
-            else:
-                st.warning(t["no_risks"])
+        with st.spinner(t["generating"]):
+            report = generate_ai_analysis(product_name, product_desc, st.session_state.enable_web_search, db)
+            st.markdown("### 🤖 AI 生成的风险分析报告")
+            st.markdown(report)
 
 st.markdown("---")
 st.caption(t["footer"])
