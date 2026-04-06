@@ -1,6 +1,3 @@
-# 完整代码（与上一轮提供的完整代码基本相同，仅调整了CSS和按钮布局）
-# 请直接复制下面整个代码块
-
 import streamlit as st
 import pandas as pd
 import json
@@ -17,9 +14,24 @@ from neo4j import GraphDatabase
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# 自定义CSS：主按钮超大居中，中英文红底，报告宽度自适应
+# 自定义CSS：主按钮超大居中、中英文红底、报告铺满宽度
 st.markdown("""
 <style>
+    /* 让整个主内容区域占满宽度（移除默认最大宽度限制） */
+    .main .block-container {
+        max-width: 100% !important;
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+    }
+    /* 报告内容占满可用宽度 */
+    .stMarkdown {
+        width: 100% !important;
+    }
+    /* 表格等元素自适应宽度 */
+    .stMarkdown table {
+        width: 100% !important;
+        display: table !important;
+    }
     /* 中英文按钮红底 */
     .stButton button[kind="secondary"] {
         background-color: #ff4b4b !important;
@@ -50,10 +62,6 @@ st.markdown("""
     .main-analyze {
         text-align: center;
         margin: 30px 0;
-    }
-    /* 报告内容宽度与主容器一致 */
-    .stMarkdown {
-        max-width: 100% !important;
     }
     /* 齿轮按钮默认样式 */
     .stButton button:has(span:contains("⚙️")) {
