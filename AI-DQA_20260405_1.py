@@ -14,17 +14,54 @@ from neo4j import GraphDatabase
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
+# 自定义CSS突出按钮
+st.markdown("""
+<style>
+    /* 右上角语言按钮样式 */
+    div[data-testid="column"]:nth-of-type(2) button, div[data-testid="column"]:nth-of-type(3) button {
+        font-size: 18px !important;
+        font-weight: bold !important;
+        padding: 0.5rem 1.2rem !important;
+        background-color: #f0f2f6 !important;
+        border-radius: 20px !important;
+        border: 1px solid #ccc !important;
+    }
+    /* 主分析按钮样式 */
+    .main-button button {
+        font-size: 22px !important;
+        font-weight: bold !important;
+        padding: 0.75rem 2rem !important;
+        background-color: #ff4b4b !important;
+        color: white !important;
+        border-radius: 40px !important;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2) !important;
+        transition: all 0.3s ease !important;
+        width: auto !important;
+        min-width: 280px !important;
+    }
+    .main-button button:hover {
+        transform: scale(1.02);
+        background-color: #e03a3a !important;
+        box-shadow: 0 6px 12px rgba(0,0,0,0.3);
+    }
+    /* 调整列间距 */
+    .main-button {
+        text-align: center;
+        margin: 20px 0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # ================== 初始化 Session State ==================
 if "lang" not in st.session_state:
     st.session_state.lang = "zh"
 if "admin_logged_in" not in st.session_state:
     st.session_state.admin_logged_in = False
 if "enable_web_search" not in st.session_state:
-    st.session_state.enable_web_search = True   # 默认开启联网搜索
+    st.session_state.enable_web_search = True
 if "translation_cache" not in st.session_state:
     st.session_state.translation_cache = {}
 
-# LLM 临时覆盖配置
 if "temp_api_key" not in st.session_state:
     st.session_state.temp_api_key = ""
 if "temp_base_url" not in st.session_state:
@@ -66,12 +103,10 @@ class SQLiteDatabase(RiskDatabase):
 
     def init_tables(self):
         cursor = self.conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS knowledge_base
-                          (category TEXT, content TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS knowledge_base (category TEXT, content TEXT)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS product_risks
                           (product_type TEXT, module TEXT, failure_mode TEXT, cause TEXT,
-                           severity INTEGER, occurrence INTEGER, detection INTEGER,
-                           mitigation TEXT)''')
+                           severity INTEGER, occurrence INTEGER, detection INTEGER, mitigation TEXT)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS industry_risks
                           (category TEXT, product_type TEXT, failure_mode TEXT, cause TEXT,
                            mitigation TEXT, source TEXT)''')
@@ -146,7 +181,6 @@ class SQLiteDatabase(RiskDatabase):
 
     def load_initial_data(self):
         cursor = self.conn.cursor()
-        # 行业数据
         industry_data = [
             ("LED", "LED路灯", "光衰过快", "结温过高", "优化散热设计", "IEC 62031"),
             ("LED", "LED路灯", "浪涌损坏", "雷击", "加装SPD", "IEC 61643-11"),
@@ -159,7 +193,6 @@ class SQLiteDatabase(RiskDatabase):
         cursor.execute("DELETE FROM industry_risks")
         for row in industry_data:
             cursor.execute("INSERT INTO industry_risks (category, product_type, failure_mode, cause, mitigation, source) VALUES (?,?,?,?,?,?)", row)
-        # 内置风险
         cursor.execute("SELECT COUNT(*) FROM product_risks")
         if cursor.fetchone()[0] == 0:
             default_risks = [
@@ -230,7 +263,7 @@ class Neo4jDatabase(RiskDatabase):
         return sorted(risks, key=lambda x: x.get("RPN", 0), reverse=True)[:10]
 
     def get_product_decomposition(self, product_name: str, description: str) -> Dict:
-        return {}  # 暂不实现
+        return {}
 
     def get_mitigation(self, module: str, failure_mode: str) -> str:
         if not self.driver:
@@ -290,7 +323,7 @@ class Neo4jDatabase(RiskDatabase):
     def load_initial_data(self):
         pass
 
-# ================== 混合数据库（SQLite + Neo4j） ==================
+# ================== 混合数据库 ==================
 class HybridDatabase(RiskDatabase):
     def __init__(self):
         self.sqlite = SQLiteDatabase()
@@ -423,7 +456,7 @@ def web_search(query: str, max_results=3) -> str:
     except Exception as e:
         return f"搜索失败: {str(e)}"
 
-# ================== AI 分析（多数据源） ==================
+# ================== AI 分析 ==================
 def generate_ai_analysis(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase) -> str:
     all_knowledge = db.get_all_knowledge()
     kb_text = "\n".join([f"[{cat}] {item}" for cat, items in all_knowledge.items() for item in items[:3]])
@@ -484,12 +517,9 @@ def admin_settings_dialog():
         return
 
     st.success("管理员已登录")
-    # 联网搜索开关
     st.subheader("🌐 联网搜索配置")
     st.session_state.enable_web_search = st.checkbox("启用联网搜索", value=st.session_state.enable_web_search)
     st.markdown("---")
-
-    # 数据库状态
     st.subheader("🗄️ 数据库状态")
     db = st.session_state.database
     neo_available = hasattr(db, 'neo4j_available') and db.neo4j_available
@@ -500,20 +530,16 @@ def admin_settings_dialog():
         "DeepSeek API": "已配置" if (st.session_state.temp_api_key or st.secrets.get("DEEPSEEK_API_KEY")) else "未配置",
     })
     st.markdown("---")
-
-    # 知识库管理（滚动显示所有条目，无页码）
     st.subheader("📚 知识库管理")
     categories = ["光学", "机械", "材料", "热学", "电气", "控制"]
     selected_cat = st.selectbox("选择分类", categories)
     items = db.get_knowledge_by_category(selected_cat)
     st.write(f"共 {len(items)} 条记录")
     if items:
-        # 使用固定高度容器滚动显示所有条目
         with st.container(height=400):
             for idx, item in enumerate(items):
                 col1, col2 = st.columns([10,1])
                 with col1:
-                    # 截取前150字符避免过长
                     display_item = item[:150] + "..." if len(item) > 150 else item
                     st.write(f"{idx+1}. {display_item}")
                 with col2:
@@ -527,9 +553,7 @@ def admin_settings_dialog():
         if new_item.strip():
             db.add_knowledge(selected_cat, new_item.strip())
             st.rerun()
-
     st.markdown("---")
-    # Excel 导入导出
     st.subheader("📥 导出/导入知识库（Excel）")
     if st.button("下载知识库模板 (Excel)"):
         all_knowledge = db.get_all_knowledge()
@@ -557,9 +581,7 @@ def admin_settings_dialog():
             st.rerun()
         except Exception as e:
             st.error(f"导入失败: {e}")
-
     st.markdown("---")
-    # LLM 临时配置
     st.subheader("⚙️ LLM API 临时配置")
     new_key = st.text_input("DeepSeek API Key", value=st.session_state.temp_api_key, type="password")
     new_url = st.text_input("Base URL", value=st.session_state.temp_base_url)
@@ -571,17 +593,17 @@ def admin_settings_dialog():
         st.rerun()
 
 # ================== 右上角按钮 ==================
-col_left, col_spacer, col_zh, col_en, col_gear = st.columns([5, 3, 1, 1, 1])
+col_left, col_spacer, col_zh, col_en, col_gear = st.columns([5, 3, 1.2, 1.2, 1])
 with col_zh:
-    if st.button("中文", use_container_width=True):
+    if st.button("🇨🇳 中文", key="zh_btn", use_container_width=True):
         st.session_state.lang = "zh"
         st.rerun()
 with col_en:
-    if st.button("English", use_container_width=True):
+    if st.button("🇬🇧 English", key="en_btn", use_container_width=True):
         st.session_state.lang = "en"
         st.rerun()
 with col_gear:
-    if st.button("⚙️", use_container_width=True):
+    if st.button("⚙️", key="settings_btn", use_container_width=True):
         admin_settings_dialog()
 
 # ================== 多语言文本 ==================
@@ -603,7 +625,7 @@ TEXTS = {
         "product_name_ph": "例如：高功率LED天棚灯",
         "product_desc": "设计描述",
         "product_desc_ph": "例如：200W COB光源，主动风扇散热，IP65",
-        "analyze_btn_ai": "🚀 开始 AI 深度分析 (DeepSeek)",
+        "analyze_btn": "开始AI深度分析",
         "product_name_missing": "请填写产品名称",
         "generating": "AI 正在分析中，请稍候...",
         "decomposition_title": "📐 产品分解结果",
@@ -632,7 +654,7 @@ TEXTS = {
         "product_name_ph": "e.g., High Bay LED Light",
         "product_desc": "Design Description",
         "product_desc_ph": "e.g., 200W COB, active fan cooling, IP65",
-        "analyze_btn_ai": "🚀 Start AI Deep Analysis (DeepSeek)",
+        "analyze_btn": "Start AI Deep Analysis",
         "product_name_missing": "Please enter product name",
         "generating": "AI is analyzing, please wait...",
         "decomposition_title": "📐 Product Decomposition",
@@ -683,7 +705,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown(t["contact_info"])
 
-# ================== 主界面（只有一个AI分析按钮） ==================
+# ================== 主界面 ==================
 st.markdown(f"### {t['input_title']}")
 col1, col2 = st.columns(2)
 with col1:
@@ -691,16 +713,18 @@ with col1:
 with col2:
     product_desc = st.text_area(t["product_desc"], placeholder=t["product_desc_ph"], height=100)
 
-# 只保留 AI 深度分析按钮
-if st.button(t["analyze_btn_ai"], type="primary", use_container_width=True):
-    if not product_name:
-        st.error(t["product_name_missing"])
-    else:
-        db = st.session_state.database
-        with st.spinner(t["generating"]):
-            report = generate_ai_analysis(product_name, product_desc, st.session_state.enable_web_search, db)
-            st.markdown("### 🤖 AI 生成的风险分析报告")
-            st.markdown(report)
+# 突出显示的分析按钮
+col_center = st.columns([1, 2, 1])[1]
+with col_center:
+    if st.button(t["analyze_btn"], type="primary", key="main_analyze"):
+        if not product_name:
+            st.error(t["product_name_missing"])
+        else:
+            db = st.session_state.database
+            with st.spinner(t["generating"]):
+                report = generate_ai_analysis(product_name, product_desc, st.session_state.enable_web_search, db)
+                st.markdown("### 🤖 AI 生成的风险分析报告")
+                st.markdown(report)
 
 st.markdown("---")
 st.caption(t["footer"])
