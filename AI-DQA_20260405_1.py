@@ -16,9 +16,9 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 
 # ================== 页面配置 ==================
-st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
+st.set_page_config(page_title="AI+DQA 产品风险分析系统", page_icon="🔍", layout="wide")
 
-# 自定义CSS：桌面端宽度铺满
+# 自定义CSS
 st.markdown("""
 <style>
     .main .block-container {
@@ -138,7 +138,6 @@ class RiskDatabase:
         raise NotImplementedError
     def load_initial_data(self) -> None:
         raise NotImplementedError
-    # 新增：根据关键词双向检索知识库
     def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
         raise NotImplementedError
 
@@ -222,7 +221,6 @@ class SQLiteDatabase(RiskDatabase):
             return {"product_type": "default", "function_units": ["电气","机械"], "modules": ["PCBA"]}
 
     def get_mitigation(self, module: str, failure_mode: str) -> str:
-        """根据模块和失效模式，从知识库中双向检索相关条目"""
         keywords = f"{module} {failure_mode}"
         results = self.search_knowledge(keywords, limit=3)
         if results:
@@ -230,7 +228,6 @@ class SQLiteDatabase(RiskDatabase):
         return "建议参考行业规范和设计指南进行优化。"
 
     def get_knowledge_by_category(self, category: str) -> List[str]:
-        """根据当前界面语言返回分类下的条目（用于管理员界面）"""
         lang = st.session_state.lang
         if lang == "zh":
             return self.knowledge_zh.get(category, [])
@@ -269,7 +266,6 @@ class SQLiteDatabase(RiskDatabase):
         self.load_caches()
 
     def get_all_knowledge(self) -> Dict[str, List[str]]:
-        """返回当前语言的所有知识库（用于AI上下文）"""
         lang = st.session_state.lang
         if lang == "zh":
             return self.knowledge_zh
@@ -277,11 +273,9 @@ class SQLiteDatabase(RiskDatabase):
             return self.knowledge_en
 
     def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
-        """双向检索：同时匹配中文和英文列，返回匹配的条目（根据当前语言优先返回对应语言版本）"""
         if not keywords.strip():
             return []
         cursor = self.conn.cursor()
-        # 同时查询 content 和 content_en，使用 LIKE 模糊匹配
         query = """
             SELECT content, content_en FROM knowledge_base 
             WHERE content LIKE ? OR content_en LIKE ?
@@ -329,7 +323,7 @@ class SQLiteDatabase(RiskDatabase):
         self.conn.commit()
         self.load_caches()
 
-# ================== Neo4j 实现（保持不变） ==================
+# ================== Neo4j 实现 ==================
 class Neo4jDatabase(RiskDatabase):
     def __init__(self):
         self.driver = None
@@ -433,7 +427,6 @@ class Neo4jDatabase(RiskDatabase):
     def load_initial_data(self):
         pass
     def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
-        # Neo4j 暂不实现双向检索，直接返回空
         return []
 
 # ================== 混合数据库 ==================
@@ -634,22 +627,17 @@ def markdown_to_docx(md_text: str, doc: Document):
             doc.add_paragraph()
         i += 1
 
-# ================== AI 分析（使用双向检索） ==================
+# ================== AI 分析（双向检索） ==================
 def generate_ai_analysis_content(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase) -> str:
-    # 从知识库中双向检索与产品名称和描述相关的条目
     search_keywords = f"{product_name} {product_desc}"
     kb_items = db.search_knowledge(search_keywords, limit=10)
     kb_text = "\n".join(kb_items) if kb_items else "暂无相关经验知识"
-    
-    # 获取内置风险数据（仍基于产品类型匹配，可保留）
     risks = db.get_risks(product_name)
     internal_text = "\n".join([f"- {r['module']}: {r['failure_mode']}（原因：{r['cause']}）" for r in risks[:5]])
-    
     web_context = ""
     if enable_web:
         with st.spinner("正在联网搜索..."):
             web_context = web_search(f"{product_name} 失效 案例", max_results=3)
-    
     prompt = f"""
 你是一位资深可靠性工程师。请根据以下信息对产品进行风险分析。
 
@@ -675,7 +663,7 @@ def generate_ai_analysis_content(product_name: str, product_desc: str, enable_we
     raw = call_deepseek(prompt, max_tokens=4000)
     return clean_ai_response(raw)
 
-# ================== 生成 Word 报告 ==================
+# ================== 生成 Word 报告（新标题） ==================
 def generate_word_report(product_name: str, product_desc: str, analyst_name: str, analyst_title: str, report_content: str) -> BytesIO:
     doc = Document()
     for section in doc.sections:
@@ -683,7 +671,8 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
         section.bottom_margin = Inches(1)
         section.left_margin = Inches(1)
         section.right_margin = Inches(1)
-    title = doc.add_heading(product_name, level=1)
+    # 主标题改为新标题
+    title = doc.add_heading("AI赋能DQA-产品设计风险分析报告", level=1)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     url_para = doc.add_paragraph("报告在线地址：")
     url_para.add_run("https://ai-app-design-dfmea.streamlit.app/").italic = True
@@ -707,8 +696,7 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
     doc.save(doc_bytes)
     doc_bytes.seek(0)
     return doc_bytes
-
-# ================== 管理员设置弹窗 ==================
+    # ================== 管理员设置弹窗 ==================
 @st.dialog("管理员设置", width="large")
 def admin_settings_dialog():
     st.subheader("🔐 管理员验证")
@@ -811,7 +799,8 @@ def admin_settings_dialog():
         st.session_state.temp_base_url = new_url
         st.session_state.temp_model = new_model
         st.rerun()
-        # ================== 右上角按钮 ==================
+
+# ================== 右上角按钮 ==================
 col_left, col_spacer, col_zh, col_en, col_gear = st.columns([5, 3, 1.2, 1.2, 1])
 with col_zh:
     if st.button("🇨🇳 中文", key="zh_btn", use_container_width=True):
@@ -950,10 +939,12 @@ with col_center:
                     author_line = "AI生成的风险分析报告"
                 disclaimer_line = "此报告是基于以上提供的有限信息，结合行业数据库和联网搜索结果生成的初步分析，仅供参考。"
                 full_report_display = f"{author_line}\n\n{disclaimer_line}\n\n{report_content}"
-                st.markdown("### 🤖 AI 生成的风险分析报告")
+                
+                # 页面报告标题改为新标题
+                st.markdown("### AI赋能DQA-产品设计风险分析报告")
                 st.markdown(full_report_display)
                 
-                # Word 下载：使用专业格式
+                # Word 下载
                 if report_content:
                     word_bytes = generate_word_report(product_name, product_desc, analyst_name, analyst_title, report_content)
                     st.download_button(
