@@ -14,7 +14,7 @@ from neo4j import GraphDatabase
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# 自定义CSS：报告铺满宽度、中英文红底、齿轮无红底
+# 自定义CSS：报告铺满宽度、中英文红底、齿轮无红底、主按钮超大居中
 st.markdown("""
 <style>
     /* 强制主内容区域占满宽度，移除默认最大宽度 */
@@ -32,8 +32,9 @@ st.markdown("""
         display: table !important;
         overflow-x: auto;
     }
-    /* 中英文按钮红底 */
-    .stButton button[kind="secondary"] {
+    /* 中英文按钮红底（基于按钮文本内容） */
+    .stButton button:has(span:contains("中文")),
+    .stButton button:has(span:contains("English")) {
         background-color: #ff4b4b !important;
         color: white !important;
         font-size: 18px !important;
@@ -54,6 +55,7 @@ st.markdown("""
         width: auto !important;
         min-width: 400px !important;
         transition: all 0.3s ease;
+        cursor: pointer !important;
     }
     .main-analyze button:hover {
         transform: scale(1.02);
@@ -71,7 +73,6 @@ st.markdown("""
         border-radius: 8px !important;
         box-shadow: none !important;
     }
-    /* 确保齿轮按钮不受其他规则影响 */
     .stButton button:has(span:contains("⚙️")):hover {
         background-color: #f0f2f6 !important;
         transform: none !important;
