@@ -18,40 +18,33 @@ from docx.oxml.ns import qn
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# 自定义CSS：强制桌面端宽度铺满，输入框和报告内容等宽
+# 自定义CSS：桌面端宽度铺满
 st.markdown("""
 <style>
-    /* 主容器占满整个视口宽度 */
     .main .block-container {
         max-width: 100% !important;
         padding-left: 2rem !important;
         padding-right: 2rem !important;
     }
-    /* 所有列和垂直块占满宽度 */
     .stVerticalBlock, .stHorizontalBlock, div[data-testid="stVerticalBlock"] {
         width: 100% !important;
     }
-    /* 文本输入框和文本域宽度100% */
     .stTextInput > div, .stTextArea > div {
         width: 100% !important;
     }
-    /* 确保Markdown容器宽度100% */
     .stMarkdown, .stMarkdown div, .stMarkdown p, .stMarkdown table {
         width: 100% !important;
         max-width: 100% !important;
     }
-    /* 移除Markdown容器的额外内边距 */
     .stMarkdown {
         padding-left: 0 !important;
         padding-right: 0 !important;
     }
-    /* 表格允许水平滚动，但宽度100% */
     .stMarkdown table {
         display: table !important;
         overflow-x: auto;
         width: 100% !important;
     }
-    /* 中英文按钮红底 */
     .stButton button:has(span:contains("中文")),
     .stButton button:has(span:contains("English")) {
         background-color: #ff4b4b !important;
@@ -62,7 +55,6 @@ st.markdown("""
         padding: 0.5rem 1.2rem !important;
         border: none !important;
     }
-    /* 主分析按钮超大居中 */
     .main-analyze button {
         font-size: 36px !important;
         padding: 20px 60px !important;
@@ -84,7 +76,6 @@ st.markdown("""
         text-align: center;
         margin: 30px 0;
     }
-    /* 齿轮按钮默认样式 */
     .stButton button:has(span:contains("⚙️")) {
         background-color: transparent !important;
         color: #31333f !important;
@@ -96,7 +87,6 @@ st.markdown("""
         background-color: #f0f2f6 !important;
         transform: none !important;
     }
-    /* 侧边栏按钮保持原样 */
     section[data-testid="stSidebar"] .stButton button {
         background-color: #f0f2f6 !important;
         color: #31333f !important;
@@ -148,8 +138,11 @@ class RiskDatabase:
         raise NotImplementedError
     def load_initial_data(self) -> None:
         raise NotImplementedError
+    # 新增：根据关键词双向检索知识库
+    def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
+        raise NotImplementedError
 
-# ================== SQLite 实现（双语知识库） ==================
+# ================== SQLite 实现（双语知识库 + 双向检索） ==================
 class SQLiteDatabase(RiskDatabase):
     def __init__(self):
         self.conn = sqlite3.connect('app_data.db', check_same_thread=False)
@@ -229,15 +222,15 @@ class SQLiteDatabase(RiskDatabase):
             return {"product_type": "default", "function_units": ["电气","机械"], "modules": ["PCBA"]}
 
     def get_mitigation(self, module: str, failure_mode: str) -> str:
-        lang = st.session_state.lang
-        knowledge = self.knowledge_zh if lang == "zh" else self.knowledge_en
-        for cat, entries in knowledge.items():
-            for entry in entries:
-                if module in entry or failure_mode in entry:
-                    return entry[:200]
+        """根据模块和失效模式，从知识库中双向检索相关条目"""
+        keywords = f"{module} {failure_mode}"
+        results = self.search_knowledge(keywords, limit=3)
+        if results:
+            return results[0][:200]
         return "建议参考行业规范和设计指南进行优化。"
 
     def get_knowledge_by_category(self, category: str) -> List[str]:
+        """根据当前界面语言返回分类下的条目（用于管理员界面）"""
         lang = st.session_state.lang
         if lang == "zh":
             return self.knowledge_zh.get(category, [])
@@ -276,8 +269,36 @@ class SQLiteDatabase(RiskDatabase):
         self.load_caches()
 
     def get_all_knowledge(self) -> Dict[str, List[str]]:
+        """返回当前语言的所有知识库（用于AI上下文）"""
         lang = st.session_state.lang
-        return self.knowledge_zh if lang == "zh" else self.knowledge_en
+        if lang == "zh":
+            return self.knowledge_zh
+        else:
+            return self.knowledge_en
+
+    def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
+        """双向检索：同时匹配中文和英文列，返回匹配的条目（根据当前语言优先返回对应语言版本）"""
+        if not keywords.strip():
+            return []
+        cursor = self.conn.cursor()
+        # 同时查询 content 和 content_en，使用 LIKE 模糊匹配
+        query = """
+            SELECT content, content_en FROM knowledge_base 
+            WHERE content LIKE ? OR content_en LIKE ?
+            LIMIT ?
+        """
+        like_pattern = f"%{keywords}%"
+        cursor.execute(query, (like_pattern, like_pattern, limit))
+        rows = cursor.fetchall()
+        lang = st.session_state.lang
+        results = []
+        for row in rows:
+            zh, en = row
+            if lang == "zh":
+                results.append(zh)
+            else:
+                results.append(en)
+        return results
 
     def load_initial_data(self):
         cursor = self.conn.cursor()
@@ -308,7 +329,7 @@ class SQLiteDatabase(RiskDatabase):
         self.conn.commit()
         self.load_caches()
 
-# ================== Neo4j 实现 ==================
+# ================== Neo4j 实现（保持不变） ==================
 class Neo4jDatabase(RiskDatabase):
     def __init__(self):
         self.driver = None
@@ -411,6 +432,9 @@ class Neo4jDatabase(RiskDatabase):
         return knowledge
     def load_initial_data(self):
         pass
+    def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
+        # Neo4j 暂不实现双向检索，直接返回空
+        return []
 
 # ================== 混合数据库 ==================
 class HybridDatabase(RiskDatabase):
@@ -469,6 +493,9 @@ class HybridDatabase(RiskDatabase):
         self.sqlite.load_initial_data()
         if self.neo4j_available:
             self.neo4j.load_initial_data()
+
+    def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
+        return self.sqlite.search_knowledge(keywords, limit)
 
 # ================== 数据库工厂 ==================
 def get_database() -> RiskDatabase:
@@ -531,8 +558,6 @@ def web_search(query: str, max_results=3) -> str:
 
 # ================== 清理 AI 响应 ==================
 def clean_ai_response(text: str) -> str:
-    """移除AI可能添加的冗余开场白，只保留从产品分解开始的内容"""
-    # 常见开场白模式
     patterns = [
         r'^好的[，,].*?\n',
         r'^作为一名资深可靠性工程师.*?\n',
@@ -542,21 +567,18 @@ def clean_ai_response(text: str) -> str:
     ]
     for pat in patterns:
         text = re.sub(pat, '', text, flags=re.IGNORECASE | re.DOTALL)
-    # 如果文本开头有“好的”等单独行，直接移除
     lines = text.split('\n')
     if lines and re.match(r'^好的[，,]?$', lines[0].strip()):
         text = '\n'.join(lines[1:])
     return text.strip()
 
-# ================== Markdown 转 Word（清理格式） ==================
+# ================== Markdown 转 Word ==================
 def clean_markdown_text(text: str) -> str:
-    """移除 ** 和 <br> 标签"""
     text = re.sub(r'\*\*', '', text)
     text = re.sub(r'<br\s*/?>', '\n', text)
     return text
 
 def markdown_to_docx(md_text: str, doc: Document):
-    """将 Markdown 文本转换为 Word 文档内容，并清理格式"""
     lines = md_text.split('\n')
     i = 0
     in_table = False
@@ -612,13 +634,17 @@ def markdown_to_docx(md_text: str, doc: Document):
             doc.add_paragraph()
         i += 1
 
-# ================== AI 分析（只输出报告内容，不含头部） ==================
+# ================== AI 分析（使用双向检索） ==================
 def generate_ai_analysis_content(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase) -> str:
-    all_knowledge = db.get_all_knowledge()
-    lang = st.session_state.lang
-    kb_text = "\n".join([f"[{cat}] {item}" for cat, items in all_knowledge.items() for item in items[:3]])
+    # 从知识库中双向检索与产品名称和描述相关的条目
+    search_keywords = f"{product_name} {product_desc}"
+    kb_items = db.search_knowledge(search_keywords, limit=10)
+    kb_text = "\n".join(kb_items) if kb_items else "暂无相关经验知识"
+    
+    # 获取内置风险数据（仍基于产品类型匹配，可保留）
     risks = db.get_risks(product_name)
     internal_text = "\n".join([f"- {r['module']}: {r['failure_mode']}（原因：{r['cause']}）" for r in risks[:5]])
+    
     web_context = ""
     if enable_web:
         with st.spinner("正在联网搜索..."):
@@ -630,8 +656,8 @@ def generate_ai_analysis_content(product_name: str, product_desc: str, enable_we
 产品名称：{product_name}
 设计描述：{product_desc}
 
-=== 企业内部知识库 ===
-{kb_text if kb_text else "暂无"}
+=== 企业内部知识库（双向检索结果） ===
+{kb_text}
 
 === 产品风险数据库 ===
 {internal_text if internal_text else "暂无"}
@@ -649,26 +675,19 @@ def generate_ai_analysis_content(product_name: str, product_desc: str, enable_we
     raw = call_deepseek(prompt, max_tokens=4000)
     return clean_ai_response(raw)
 
-# ================== 生成 Word 报告（专业格式） ==================
+# ================== 生成 Word 报告 ==================
 def generate_word_report(product_name: str, product_desc: str, analyst_name: str, analyst_title: str, report_content: str) -> BytesIO:
     doc = Document()
-    # 设置页面边距
     for section in doc.sections:
         section.top_margin = Inches(1)
         section.bottom_margin = Inches(1)
         section.left_margin = Inches(1)
         section.right_margin = Inches(1)
-    
-    # 标题：产品名称
     title = doc.add_heading(product_name, level=1)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    
-    # 报告在线地址
     url_para = doc.add_paragraph("报告在线地址：")
     url_para.add_run("https://ai-app-design-dfmea.streamlit.app/").italic = True
     doc.add_paragraph()
-    
-    # 报告基本信息表格
     info_table = doc.add_table(rows=4, cols=2)
     info_table.style = 'Table Grid'
     info_table.cell(0, 0).text = "产品名称"
@@ -683,10 +702,7 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
     info_table.cell(3, 0).text = "分析人"
     info_table.cell(3, 1).text = analyst_str
     doc.add_paragraph()
-    
-    # 报告正文
     markdown_to_docx(report_content, doc)
-    
     doc_bytes = BytesIO()
     doc.save(doc_bytes)
     doc_bytes.seek(0)
@@ -719,6 +735,7 @@ def admin_settings_dialog():
         "Neo4j 连接": "✅ 已连接" if neo_available else "⚠️ 未连接（仅使用 SQLite）",
         "联网搜索": "启用" if st.session_state.enable_web_search else "禁用",
         "DeepSeek API": "已配置" if (st.session_state.temp_api_key or st.secrets.get("DEEPSEEK_API_KEY")) else "未配置",
+        "双向检索": "✅ 已启用（同时匹配中英文知识库）"
     })
     st.markdown("---")
     st.subheader("📚 知识库管理（双语）")
@@ -794,8 +811,7 @@ def admin_settings_dialog():
         st.session_state.temp_base_url = new_url
         st.session_state.temp_model = new_model
         st.rerun()
-
-# ================== 右上角按钮 ==================
+        # ================== 右上角按钮 ==================
 col_left, col_spacer, col_zh, col_en, col_gear = st.columns([5, 3, 1.2, 1.2, 1])
 with col_zh:
     if st.button("🇨🇳 中文", key="zh_btn", use_container_width=True):
