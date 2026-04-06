@@ -14,10 +14,10 @@ from neo4j import GraphDatabase
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# 自定义CSS：主按钮超大居中、中英文红底、报告铺满宽度
+# 自定义CSS：主按钮超大居中、中英文红底、报告铺满宽度、齿轮无红底
 st.markdown("""
 <style>
-    /* 让整个主内容区域占满宽度（移除默认最大宽度限制） */
+    /* 让整个主内容区域占满宽度 */
     .main .block-container {
         max-width: 100% !important;
         padding-left: 1rem !important;
@@ -27,7 +27,6 @@ st.markdown("""
     .stMarkdown {
         width: 100% !important;
     }
-    /* 表格等元素自适应宽度 */
     .stMarkdown table {
         width: 100% !important;
         display: table !important;
@@ -63,7 +62,7 @@ st.markdown("""
         text-align: center;
         margin: 30px 0;
     }
-    /* 齿轮按钮默认样式 */
+    /* 齿轮按钮默认样式（无红底） */
     .stButton button:has(span:contains("⚙️")) {
         background-color: transparent !important;
         color: #31333f !important;
@@ -735,13 +734,14 @@ with st.sidebar:
     st.markdown("---")
     st.markdown(t["contact_info"])
 
-# ================== 主界面 ==================
+# ================== 主界面（垂直布局） ==================
 st.markdown(f"### {t['input_title']}")
-col1, col2 = st.columns(2)
-with col1:
-    product_name = st.text_input(t["product_name"], placeholder=t["product_name_ph"])
-with col2:
-    product_desc = st.text_area(t["product_desc"], placeholder=t["product_desc_ph"], height=100)
+
+# 产品名称
+product_name = st.text_input(t["product_name"], placeholder=t["product_name_ph"])
+
+# 设计描述（放在产品名称下方）
+product_desc = st.text_area(t["product_desc"], placeholder=t["product_desc_ph"], height=100)
 
 # 主分析按钮：居中、超大
 col_center = st.columns([1, 2, 1])[1]
