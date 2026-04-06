@@ -14,22 +14,23 @@ from neo4j import GraphDatabase
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# 自定义CSS：主按钮超大居中、中英文红底、报告铺满宽度、齿轮无红底
+# 自定义CSS：报告铺满宽度、中英文红底、齿轮无红底
 st.markdown("""
 <style>
-    /* 让整个主内容区域占满宽度 */
+    /* 强制主内容区域占满宽度，移除默认最大宽度 */
     .main .block-container {
         max-width: 100% !important;
-        padding-left: 1rem !important;
-        padding-right: 1rem !important;
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
     }
-    /* 报告内容占满可用宽度 */
-    .stMarkdown {
+    /* 让所有Markdown内容（包括表格）宽度100% */
+    .stMarkdown, .stMarkdown div, .stMarkdown table {
         width: 100% !important;
     }
+    /* 表格自适应 */
     .stMarkdown table {
-        width: 100% !important;
         display: table !important;
+        overflow-x: auto;
     }
     /* 中英文按钮红底 */
     .stButton button[kind="secondary"] {
@@ -62,13 +63,18 @@ st.markdown("""
         text-align: center;
         margin: 30px 0;
     }
-    /* 齿轮按钮默认样式（无红底） */
+    /* 齿轮按钮：无红底，默认样式 */
     .stButton button:has(span:contains("⚙️")) {
         background-color: transparent !important;
         color: #31333f !important;
         border: 1px solid #ccc !important;
         border-radius: 8px !important;
         box-shadow: none !important;
+    }
+    /* 确保齿轮按钮不受其他规则影响 */
+    .stButton button:has(span:contains("⚙️")):hover {
+        background-color: #f0f2f6 !important;
+        transform: none !important;
     }
     /* 侧边栏按钮保持原样 */
     section[data-testid="stSidebar"] .stButton button {
