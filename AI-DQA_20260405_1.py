@@ -1,223 +1,639 @@
 import streamlit as st
 import pandas as pd
-import json
+import sqlite3
 import re
-from typing import Dict, List, Tuple
-import random
+import json
+from io import BytesIO
+from datetime import datetime
+from typing import Dict, List, Optional
 
-# 如果不想调用真实LLM，使用模拟生成器
-# 若需要真实LLM，请取消注释并设置 OPENAI_API_KEY
-# import openai
-# openai.api_key = st.secrets["OPENAI_API_KEY"]
+# 可选依赖：如果未安装，则禁用相应功能
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
 
-# ==================== 模拟知识库 ====================
-# 不同产品类型的风险知识库（后续可替换为真实知识图谱查询）
-PRODUCT_RISK_DB = {
-    "LED路灯": {
-        "function_units": ["光学", "电气", "热学", "结构"],
-        "risks": [
-            {"module": "LED光源", "failure_mode": "光衰过快", "cause": "结温过高/驱动电流过大", "severity": 8, "occurrence": 7, "detection": 5, "mitigation": "采用热仿真优化散热器，限流设计"},
-            {"module": "驱动电源", "failure_mode": "电解电容鼓包", "cause": "高温/纹波电流超标", "severity": 9, "occurrence": 6, "detection": 6, "mitigation": "选用长寿命电容，降低纹波，加强散热"},
-            {"module": "透镜", "failure_mode": "黄变/透光率下降", "cause": "UV辐射/高温老化", "severity": 6, "occurrence": 5, "detection": 4, "mitigation": "添加UV吸收剂，采用玻璃透镜"},
-            {"module": "防水结构", "failure_mode": "进水气导致短路", "cause": "密封圈老化/设计缺陷", "severity": 9, "occurrence": 4, "detection": 7, "mitigation": "IP68验证，双重密封设计"},
-            {"module": "浪涌保护", "failure_mode": "雷击损坏", "cause": "无SPD或SPD失效", "severity": 10, "occurrence": 3, "detection": 8, "mitigation": "加装10kV SPD，接地设计"},
-            {"module": "PCBA", "failure_mode": "焊点开裂", "cause": "热循环应力", "severity": 7, "occurrence": 5, "detection": 6, "mitigation": "选用高TG PCB，优化回流焊工艺"},
-            {"module": "螺丝紧固", "failure_mode": "松动导致接触不良", "cause": "振动/扭矩不足", "severity": 5, "occurrence": 4, "detection": 5, "mitigation": "螺纹胶+扭矩规范"},
-            {"module": "散热器", "failure_mode": "散热鳍片积尘", "cause": "户外环境", "severity": 4, "occurrence": 8, "detection": 3, "mitigation": "自清洁涂层，定期维护建议"},
-            {"module": "线材", "failure_mode": "外皮老化开裂", "cause": "紫外线/臭氧", "severity": 6, "occurrence": 5, "detection": 4, "mitigation": "选用耐UV线材，加套管"},
-            {"module": "灌胶", "failure_mode": "灌胶不饱满", "cause": "工艺不良/胶水粘度", "severity": 7, "occurrence": 3, "detection": 8, "mitigation": "真空灌胶工艺，AOI检测"}
-        ]
+try:
+    from docx import Document
+    from docx.shared import Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
+
+# ================== 页面配置 ==================
+st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
+
+# 自定义 CSS
+st.markdown("""
+<style>
+    .stButton button:has(span:contains("中文")),
+    .stButton button:has(span:contains("English")) {
+        background-color: #ff4b4b !important;
+        color: white !important;
+        font-size: 16px !important;
+        font-weight: bold !important;
+        border-radius: 40px !important;
+        padding: 0.5rem 1rem !important;
+        min-width: 120px !important;
+        white-space: nowrap !important;
+    }
+    .main-analyze button {
+        font-size: 36px !important;
+        padding: 20px 60px !important;
+        background-color: #ff4b4b !important;
+        color: white !important;
+        border-radius: 60px !important;
+        min-width: 400px !important;
+        transition: all 0.3s ease;
+    }
+    .main-analyze button:hover {
+        transform: scale(1.02);
+        background-color: #e03a3a !important;
+    }
+    .report-card {
+        background-color: #f8f9fa;
+        padding: 1.5rem;
+        border-radius: 12px;
+        margin: 1rem 0;
+    }
+    .report-card table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1em 0;
+    }
+    .report-card th, .report-card td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+    }
+    .report-card th {
+        background-color: #f2f2f2;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ================== Session State 初始化 ==================
+if "lang" not in st.session_state:
+    st.session_state.lang = "zh"
+if "admin_logged_in" not in st.session_state:
+    st.session_state.admin_logged_in = False
+if "temp_api_key" not in st.session_state:
+    st.session_state.temp_api_key = ""
+if "temp_base_url" not in st.session_state:
+    st.session_state.temp_base_url = "https://api.deepseek.com"
+if "temp_model" not in st.session_state:
+    st.session_state.temp_model = "deepseek-chat"
+if "analyst_name" not in st.session_state:
+    st.session_state.analyst_name = ""
+if "analyst_title" not in st.session_state:
+    st.session_state.analyst_title = ""
+
+# ================== 管理员凭证 ==================
+ADMIN_USERNAME = "Laurence_ku"
+ADMIN_PASSWORD = "Ku_product$2026"
+
+# ================== SQLite 数据库（单库，无外部依赖） ==================
+class RiskDatabase:
+    def __init__(self):
+        self.conn = sqlite3.connect('app_data.db', check_same_thread=False)
+        self.init_tables()
+        self.load_caches()
+
+    def init_tables(self):
+        cursor = self.conn.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS knowledge_base
+                          (category TEXT, content TEXT, content_en TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS product_risks
+                          (product_type TEXT, module TEXT, failure_mode TEXT, cause TEXT,
+                           severity INTEGER, occurrence INTEGER, detection INTEGER, mitigation TEXT)''')
+        cursor.execute("PRAGMA table_info(knowledge_base)")
+        cols = [col[1] for col in cursor.fetchall()]
+        if 'content_en' not in cols:
+            cursor.execute("ALTER TABLE knowledge_base ADD COLUMN content_en TEXT")
+        self.conn.commit()
+        self._init_default_data()
+
+    def _init_default_data(self):
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM product_risks")
+        if cursor.fetchone()[0] == 0:
+            default_risks = [
+                ("LED路灯", "LED光源", "光衰过快", "结温过高", 8, 7, 5, "优化散热设计，控制结温低于85°C"),
+                ("LED路灯", "驱动电源", "电容鼓包", "高温", 9, 6, 6, "选用105°C长寿命电解电容"),
+                ("洗地机", "滚刷电机", "堵转", "毛发缠绕", 8, 7, 6, "增加过流保护电路，设计防缠绕结构"),
+                ("吸尘器", "电机", "吸力下降", "滤网堵塞", 7, 6, 5, "增加滤网堵塞报警和清理提醒"),
+                ("宠物饮水机", "水泵", "噪音增大", "叶轮磨损", 6, 5, 4, "采用无刷陶瓷轴水泵"),
+            ]
+            for row in default_risks:
+                cursor.execute("INSERT INTO product_risks VALUES (?,?,?,?,?,?,?,?)", row)
+        self.conn.commit()
+
+    def load_caches(self):
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT category, content, content_en FROM knowledge_base")
+        rows = cursor.fetchall()
+        self.knowledge_zh = {"光学": [], "机械": [], "材料": [], "热学": [], "电气": [], "控制": []}
+        self.knowledge_en = {"光学": [], "机械": [], "材料": [], "热学": [], "电气": [], "控制": []}
+        for cat, zh, en in rows:
+            if cat in self.knowledge_zh:
+                self.knowledge_zh[cat].append(zh)
+                self.knowledge_en[cat].append(en if en else zh)
+        # 加载产品风险缓存
+        cursor.execute("SELECT product_type, module, failure_mode, cause, severity, occurrence, detection, mitigation FROM product_risks")
+        self.product_risks = {}
+        for row in cursor.fetchall():
+            ptype = row[0]
+            if ptype not in self.product_risks:
+                self.product_risks[ptype] = []
+            self.product_risks[ptype].append({
+                "module": row[1], "failure_mode": row[2], "cause": row[3],
+                "severity": row[4], "occurrence": row[5], "detection": row[6],
+                "mitigation": row[7]
+            })
+
+    def get_risks(self, product_type: str) -> List[Dict]:
+        # 模糊匹配产品类型
+        matched = []
+        for ptype, risks in self.product_risks.items():
+            if product_type.lower() in ptype.lower() or ptype.lower() in product_type.lower():
+                matched.extend(risks)
+        if not matched:
+            matched = self.product_risks.get(product_type, [])
+        for r in matched:
+            r["RPN"] = r["severity"] * r["occurrence"] * r["detection"]
+        return sorted(matched, key=lambda x: x["RPN"], reverse=True)[:10]
+
+    def get_product_decomposition(self, product_name: str, description: str) -> Dict:
+        if "路灯" in product_name or "street light" in product_name.lower():
+            return {"product_type": "LED路灯", "function_units": ["光学","电气","热学"], "modules": ["LED光源","驱动电源"]}
+        elif "天棚灯" in product_name or "high bay" in product_name.lower():
+            return {"product_type": "高功率天棚灯", "function_units": ["光学","电气","热学","控制"], "modules": ["COB光源","风扇","热管"]}
+        else:
+            return {"product_type": product_name, "function_units": ["电气","机械"], "modules": ["PCBA"]}
+
+    def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
+        if not keywords.strip():
+            return []
+        cursor = self.conn.cursor()
+        lang = st.session_state.lang
+        if lang == "zh":
+            cursor.execute("SELECT content FROM knowledge_base WHERE content LIKE ? LIMIT ?", (f"%{keywords}%", limit))
+        else:
+            cursor.execute("SELECT content_en FROM knowledge_base WHERE content_en LIKE ? LIMIT ?", (f"%{keywords}%", limit))
+        return [row[0] for row in cursor.fetchall()]
+
+    def get_knowledge_by_category(self, category: str) -> List[str]:
+        lang = st.session_state.lang
+        if lang == "zh":
+            return self.knowledge_zh.get(category, [])
+        else:
+            return self.knowledge_en.get(category, [])
+
+    def add_knowledge(self, category: str, content: str):
+        # 简单双语存储（如果输入是中文，自动用相同内容作为英文；反之亦然）
+        lang = st.session_state.lang
+        if lang == "zh":
+            zh, en = content, content
+        else:
+            zh, en = content, content
+        cursor = self.conn.cursor()
+        cursor.execute("INSERT INTO knowledge_base (category, content, content_en) VALUES (?, ?, ?)",
+                       (category, zh, en))
+        self.conn.commit()
+        self.load_caches()
+
+    def delete_knowledge(self, category: str, content: str):
+        cursor = self.conn.cursor()
+        lang = st.session_state.lang
+        if lang == "zh":
+            cursor.execute("DELETE FROM knowledge_base WHERE category = ? AND content = ?", (category, content))
+        else:
+            cursor.execute("DELETE FROM knowledge_base WHERE category = ? AND content_en = ?", (category, content))
+        self.conn.commit()
+        self.load_caches()
+
+    def clear_knowledge_category(self, category: str):
+        cursor = self.conn.cursor()
+        cursor.execute("DELETE FROM knowledge_base WHERE category = ?", (category,))
+        self.conn.commit()
+        self.load_caches()
+
+    def get_all_knowledge(self) -> Dict[str, List[str]]:
+        lang = st.session_state.lang
+        return self.knowledge_zh if lang == "zh" else self.knowledge_en
+
+# ================== AI 调用 ==================
+def get_openai_client():
+    if not OPENAI_AVAILABLE:
+        return None, "未安装 openai 库，请运行: pip install openai"
+    api_key = st.session_state.temp_api_key
+    base_url = st.session_state.temp_base_url
+    if not api_key:
+        return None, "未配置 API Key"
+    return openai.OpenAI(api_key=api_key, base_url=base_url), None
+
+def call_deepseek(prompt: str, max_tokens=4000) -> str:
+    client, error = get_openai_client()
+    if error:
+        return f"AI 调用失败: {error}"
+    try:
+        model = st.session_state.temp_model
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=max_tokens
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"AI 调用失败: {str(e)}"
+
+def clean_ai_response(text: str, lang: str = "zh") -> str:
+    patterns_zh = [r'^好的[，,].*?\n', r'^作为一名资深可靠性工程师.*?\n', r'^基于以上提供的信息.*?\n']
+    patterns_en = [r'^Okay[,.]?\s*\n', r'^As a senior reliability engineer.*?\n', r'^Based on the above information.*?\n']
+    for pat in (patterns_zh if lang=="zh" else patterns_en):
+        text = re.sub(pat, '', text, flags=re.IGNORECASE | re.DOTALL)
+    return text.strip()
+
+# ================== 生成 AI 分析内容 ==================
+def generate_ai_analysis(product_name: str, product_desc: str, db: RiskDatabase, lang: str) -> str:
+    # 获取产品分解，用于匹配风险
+    decomp = db.get_product_decomposition(product_name, product_desc)
+    product_type = decomp.get("product_type", product_name)
+    # 检索知识库
+    kb_items = db.search_knowledge(f"{product_name} {product_desc}", limit=8)
+    kb_text = "\n".join(kb_items) if kb_items else ("暂无相关经验知识" if lang=="zh" else "No relevant knowledge found")
+    # 获取风险数据库中的风险
+    risks = db.get_risks(product_type)
+    risk_table_rows = []
+    for r in risks[:5]:
+        risk_table_rows.append(f"| {r['module']} | {r['failure_mode']} | {r['cause']} | {r['severity']} | {r['occurrence']} | {r['detection']} | {r['RPN']} |")
+    risk_table = "\n".join(risk_table_rows) if risk_table_rows else ("| - | - | - | - | - | - | - |" if lang=="zh" else "| - | - | - | - | - | - | - |")
+    if lang == "zh":
+        prompt = f"""
+你是一位资深可靠性工程师。请根据以下信息对产品进行风险分析。
+
+产品名称：{product_name}
+设计描述：{product_desc}
+
+=== 企业内部知识库 ===
+{kb_text}
+
+=== 产品风险数据库（匹配类型：{product_type}） ===
+{risk_table}
+
+请直接输出风险分析报告，不要添加任何开场白。报告必须包含以下三个部分（使用 Markdown 格式）：
+### 1. 产品分解
+（根据产品名称和设计描述，分解出主要功能单元和关键模块）
+
+### 2. Top 5 潜在风险
+（用表格形式，列：模块、失效模式、原因、严重度、发生度、探测度、RPN）
+
+### 3. 关键风险缓解策略
+（针对RPN最高的3项风险，给出具体的改进建议）
+
+注意：表格中不要使用加粗符号（**）。
+"""
+    else:
+        prompt = f"""
+You are a senior reliability engineer. Conduct a risk analysis based on the information below.
+
+Product Name: {product_name}
+Design Description: {product_desc}
+
+=== Internal Knowledge Base ===
+{kb_text}
+
+=== Product Risk Database (matched type: {product_type}) ===
+{risk_table}
+
+Output the report directly, no preamble. The report MUST include exactly the following three sections (Markdown format):
+### 1. Product Decomposition
+### 2. Top 5 Potential Risks (Table: Module, Failure Mode, Cause, Severity, Occurrence, Detection, RPN)
+### 3. Key Risk Mitigation Strategies (for the top 3 risks by RPN)
+
+Do not use ** in the table.
+"""
+    raw = call_deepseek(prompt, max_tokens=4000)
+    return clean_ai_response(raw, lang)
+
+# ================== Word 报告生成 ==================
+def markdown_to_docx(md_text: str, doc):
+    lines = md_text.split('\n')
+    i = 0
+    in_table = False
+    while i < len(lines):
+        line = lines[i].strip()
+        if line.startswith('# '):
+            doc.add_heading(line[2:], level=1)
+            i += 1
+        elif line.startswith('## '):
+            doc.add_heading(line[3:], level=2)
+            i += 1
+        elif line.startswith('### '):
+            doc.add_heading(line[4:], level=3)
+            i += 1
+        elif line.startswith('|') and not in_table:
+            in_table = True
+            table_lines = []
+            while i < len(lines) and lines[i].strip().startswith('|'):
+                table_lines.append(lines[i].strip())
+                i += 1
+            if len(table_lines) >= 2:
+                header_cells = [cell.strip() for cell in table_lines[0].split('|')[1:-1]]
+                if '---' in table_lines[1]:
+                    data_lines = table_lines[2:]
+                else:
+                    data_lines = table_lines[1:]
+                num_cols = len(header_cells)
+                if num_cols > 0 and data_lines:
+                    table = doc.add_table(rows=1+len(data_lines), cols=num_cols)
+                    table.style = 'Table Grid'
+                    for col, cell_text in enumerate(header_cells):
+                        table.cell(0, col).text = cell_text
+                    for row_idx, data_line in enumerate(data_lines):
+                        cells = [cell.strip() for cell in data_line.split('|')[1:-1]]
+                        for col_idx, cell_text in enumerate(cells):
+                            if col_idx < num_cols:
+                                table.cell(row_idx+1, col_idx).text = cell_text
+                    doc.add_paragraph()
+            in_table = False
+        elif line:
+            doc.add_paragraph(line)
+        else:
+            doc.add_paragraph()
+            i += 1
+
+def generate_word_report(product_name: str, product_desc: str, analyst_name: str, analyst_title: str, report_content: str, lang: str) -> BytesIO:
+    if not DOCX_AVAILABLE:
+        st.error("python-docx 未安装，无法生成 Word 报告")
+        return BytesIO()
+    doc = Document()
+    for section in doc.sections:
+        section.top_margin = Inches(1)
+        section.bottom_margin = Inches(1)
+        section.left_margin = Inches(1)
+        section.right_margin = Inches(1)
+    if lang == "en":
+        title_text = "AI-Enabled DQA Product Design Risk Analysis Report"
+        url_label = "Report online address:"
+        labels = {"product_name": "Product Name", "design_desc": "Design Description", "date": "Report Date", "analyst": "Analyst"}
+    else:
+        title_text = "AI赋能DQA-产品设计风险分析报告"
+        url_label = "报告在线地址："
+        labels = {"product_name": "产品名称", "design_desc": "设计描述", "date": "报告日期", "analyst": "分析人"}
+    title = doc.add_heading(title_text, level=1)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_paragraph(url_label).add_run("https://ai-app-design-dfmea.streamlit.app/").italic = True
+    doc.add_paragraph()
+    info_table = doc.add_table(rows=4, cols=2)
+    info_table.style = 'Table Grid'
+    info_table.cell(0,0).text = labels["product_name"]
+    info_table.cell(0,1).text = product_name
+    info_table.cell(1,0).text = labels["design_desc"]
+    info_table.cell(1,1).text = product_desc
+    info_table.cell(2,0).text = labels["date"]
+    info_table.cell(2,1).text = datetime.now().strftime("%Y-%m-%d")
+    analyst_str = analyst_name if analyst_name else ("未填写" if lang=="zh" else "Not filled")
+    if analyst_title:
+        analyst_str += f" ({analyst_title})"
+    info_table.cell(3,0).text = labels["analyst"]
+    info_table.cell(3,1).text = analyst_str
+    doc.add_paragraph()
+    markdown_to_docx(report_content, doc)
+    doc_bytes = BytesIO()
+    doc.save(doc_bytes)
+    doc_bytes.seek(0)
+    return doc_bytes
+
+# ================== 管理员设置弹窗 ==================
+@st.dialog("管理员设置", width="large")
+def admin_settings_dialog():
+    if not st.session_state.admin_logged_in:
+        username = st.text_input("用户名")
+        password = st.text_input("密码", type="password")
+        if st.button("登录"):
+            if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+                st.session_state.admin_logged_in = True
+                st.rerun()
+            else:
+                st.error("用户名或密码错误")
+        return
+    st.success("管理员已登录")
+    st.subheader("🌐 功能配置")
+    st.session_state.enable_web_search = st.checkbox("启用联网搜索（需要安装 duckduckgo-search）", value=False)
+    st.markdown("---")
+    st.subheader("🗄️ 数据库状态")
+    st.json({
+        "数据库模式": "SQLite (本地文件)",
+        "知识库分类": ["光学","机械","材料","热学","电气","控制"],
+        "产品风险条目": len(st.session_state.database.product_risks),
+    })
+    st.markdown("---")
+    st.subheader("📚 知识库管理（双语）")
+    categories = ["光学", "机械", "材料", "热学", "电气", "控制"]
+    selected_cat = st.selectbox("选择分类", categories)
+    items = st.session_state.database.get_knowledge_by_category(selected_cat)
+    st.write(f"共 {len(items)} 条记录")
+    if items:
+        with st.container(height=400):
+            for idx, item in enumerate(items):
+                col1, col2 = st.columns([10,1])
+                with col1:
+                    display_item = item[:150] + "..." if len(item) > 150 else item
+                    st.write(f"{idx+1}. {display_item}")
+                with col2:
+                    if st.button("❌", key=f"del_{selected_cat}_{idx}"):
+                        st.session_state.database.delete_knowledge(selected_cat, item)
+                        st.rerun()
+    else:
+        st.info("暂无条目")
+    new_item = st.text_area("添加新经验教训", height=100)
+    if st.button("添加条目") and new_item.strip():
+        st.session_state.database.add_knowledge(selected_cat, new_item.strip())
+        st.rerun()
+    st.markdown("---")
+    st.subheader("📥 导出/导入知识库（Excel）")
+    if st.button("下载知识库模板 (Excel)"):
+        all_knowledge = st.session_state.database.get_all_knowledge()
+        max_len = max((len(all_knowledge.get(cat, [])) for cat in categories), default=0)
+        export_data = {}
+        for cat in categories:
+            items = all_knowledge.get(cat, [])
+            export_data[cat] = items + [''] * (max_len - len(items))
+        df = pd.DataFrame(export_data)
+        df.columns = ["光学 / Optical", "机械 / Mechanical", "材料 / Material", "热学 / Thermal", "电气 / Electrical", "控制 / Control"]
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name="知识库", index=False)
+        st.download_button(label="下载 Excel 文件", data=output.getvalue(), file_name=f"knowledge_base_{datetime.now().strftime('%Y%m%d')}.xlsx")
+    uploaded = st.file_uploader("上传 Excel 文件（覆盖）", type=["xlsx"])
+    if uploaded:
+        try:
+            df = pd.read_excel(uploaded, sheet_name="知识库")
+            mapping = {
+                "光学 / Optical": "光学", "机械 / Mechanical": "机械", "材料 / Material": "材料",
+                "热学 / Thermal": "热学", "电气 / Electrical": "电气", "控制 / Control": "控制",
+                "光学": "光学", "机械": "机械", "材料": "材料", "热学": "热学", "电气": "电气", "控制": "控制"
+            }
+            for cat in categories:
+                st.session_state.database.clear_knowledge_category(cat)
+            for excel_col, cat in mapping.items():
+                if excel_col in df.columns:
+                    for item in df[excel_col].dropna().astype(str).str.strip():
+                        if item:
+                            st.session_state.database.add_knowledge(cat, item)
+            st.success(f"知识库已更新！")
+            st.rerun()
+        except Exception as e:
+            st.error(f"导入失败：{e}")
+    st.markdown("---")
+    st.subheader("⚙️ LLM API 配置")
+    new_key = st.text_input("DeepSeek API Key", value=st.session_state.temp_api_key, type="password")
+    new_url = st.text_input("Base URL", value=st.session_state.temp_base_url)
+    new_model = st.text_input("Model", value=st.session_state.temp_model)
+    if st.button("应用配置"):
+        st.session_state.temp_api_key = new_key
+        st.session_state.temp_base_url = new_url
+        st.session_state.temp_model = new_model
+        st.rerun()
+
+# ================== 右上角按钮 ==================
+col_left, col_spacer, col_zh, col_en, col_gear = st.columns([5, 2, 1.8, 1.8, 1])
+with col_zh:
+    if st.button("🇨🇳 中文", key="zh_btn", use_container_width=True):
+        st.session_state.lang = "zh"
+        st.rerun()
+with col_en:
+    if st.button("🇬🇧 English", key="en_btn", use_container_width=True):
+        st.session_state.lang = "en"
+        st.rerun()
+with col_gear:
+    if st.button("⚙️", key="settings_btn", use_container_width=True):
+        admin_settings_dialog()
+
+# ================== 多语言文本 ==================
+TEXTS = {
+    "zh": {
+        "title": "🔍 AI+DQA 产品风险分析系统",
+        "sidebar_title": "关于系统",
+        "basis_items": ["25+年研发管理经验", "AI大模型数据分析", "DFSS/六西格玛方法论"],
+        "analyst_name_label": "分析人姓名", "analyst_name_ph": "请输入姓名",
+        "analyst_title_label": "分析人头衔（可选）", "analyst_title_ph": "例如：研发总监",
+        "api_status": "DeepSeek API 状态",
+        "api_configured": "✅ 已配置", "api_not_configured": "❌ 未配置",
+        "contact_info": "📞 **联系：**  \n✉️ 电邮: Techlife2027@gmail.com",
+        "input_title": "📝 产品风险分析",
+        "product_name": "产品名称", "product_name_ph": "例如：高功率LED天棚灯",
+        "product_desc": "设计描述", "product_desc_ph": "例如：200W COB光源，主动风扇散热，IP65",
+        "analyze_btn": "开始AI深度分析",
+        "product_name_missing": "请填写产品名称",
+        "generating": "AI 正在分析中，请稍候...",
+        "footer": "© 2026 Laurence Ku | AI+DQA 风险分析",
+        "db_status": "数据库状态",
+        "db_connected": "✅ SQLite 本地数据库",
     },
-    "高功率天棚灯": {
-        "function_units": ["光学", "电气", "热学", "结构", "控制"],
-        "risks": [
-            {"module": "COB光源", "failure_mode": "死灯", "cause": "金线断裂/芯片过温", "severity": 9, "occurrence": 6, "detection": 5, "mitigation": "选用优质COB，降额使用"},
-            {"module": "风扇主动散热", "failure_mode": "风扇停转", "cause": "轴承磨损/堵转", "severity": 8, "occurrence": 7, "detection": 6, "mitigation": "双风扇冗余，转速监控报警"},
-            {"module": "驱动电源", "failure_mode": "MOSFET击穿", "cause": "过压/过温", "severity": 9, "occurrence": 5, "detection": 7, "mitigation": "增加保护电路，选用低Rds(on) MOS"},
-            {"module": "透镜阵列", "failure_mode": "部分透镜脱落", "cause": "胶水老化/振动", "severity": 6, "occurrence": 3, "detection": 4, "mitigation": "卡扣+胶水双重固定"},
-            {"module": "吊装结构", "failure_mode": "掉落风险", "cause": "螺丝松动/材料疲劳", "severity": 10, "occurrence": 2, "detection": 8, "mitigation": "安全钢丝绳+定期检查"},
-            {"module": "调光接口", "failure_mode": "调光失效/闪烁", "cause": "信号干扰/不匹配", "severity": 5, "occurrence": 4, "detection": 5, "mitigation": "隔离调光信号，匹配0-10V标准"},
-            {"module": "防雷击", "failure_mode": "浪涌损坏", "cause": "电网波动", "severity": 8, "occurrence": 4, "detection": 7, "mitigation": "差模/共模保护，气体放电管"},
-            {"module": "密封圈", "failure_mode": "老化漏水", "cause": "高温/化学腐蚀", "severity": 7, "occurrence": 5, "detection": 6, "mitigation": "硅胶密封圈，IP67测试"},
-            {"module": "线束连接器", "failure_mode": "接触电阻增大发热", "cause": "氧化/松动", "severity": 7, "occurrence": 4, "detection": 5, "mitigation": "镀金端子，防松设计"},
-            {"module": "散热器表面处理", "failure_mode": "涂层脱落影响散热", "cause": "附着力不足", "severity": 4, "occurrence": 3, "detection": 4, "mitigation": "阳极氧化+附着力测试"}
-        ]
-    },
-    "LED筒灯": {
-        "function_units": ["光学", "电气", "热学", "结构"],
-        "risks": [
-            {"module": "LED灯珠", "failure_mode": "单颗死灯", "cause": "静电击穿/过流", "severity": 7, "occurrence": 5, "detection": 6, "mitigation": "ESD防护，恒流驱动"},
-            {"module": "驱动电源", "failure_mode": "频闪", "cause": "纹波过大/电路设计", "severity": 6, "occurrence": 6, "detection": 5, "mitigation": "增加输出滤波，满足IEEE 1789"},
-            {"module": "弹簧卡扣", "failure_mode": "断裂导致掉落", "cause": "金属疲劳/材料脆性", "severity": 8, "occurrence": 3, "detection": 4, "mitigation": "选用弹簧钢，疲劳测试"},
-            {"module": "扩散板", "failure_mode": "黄变/脆化", "cause": "高温/UV", "severity": 5, "occurrence": 4, "detection": 3, "mitigation": "PC+UV涂层"},
-            {"module": "接线端子", "failure_mode": "接触不良发热", "cause": "螺丝未锁紧", "severity": 7, "occurrence": 5, "detection": 6, "mitigation": "免螺丝端子+扭力批管控"}
-        ]
-    },
-    "智能洗地机": {
-        "function_units": ["机械", "电气", "流体", "控制", "传感"],
-        "risks": [
-            {"module": "滚刷电机", "failure_mode": "堵转烧毁", "cause": "毛发缠绕/异物卡滞", "severity": 8, "occurrence": 7, "detection": 6, "mitigation": "过流保护+防缠绕结构"},
-            {"module": "水泵", "failure_mode": "不出水/流量小", "cause": "堵塞/膜片老化", "severity": 7, "occurrence": 6, "detection": 5, "mitigation": "滤网+自清洁模式"},
-            {"module": "电池包", "failure_mode": "续航衰减", "cause": "电芯老化/BMS不均衡", "severity": 6, "occurrence": 8, "detection": 4, "mitigation": "选用A品电芯，均衡充电"},
-            {"module": "污水箱传感器", "failure_mode": "误报满水", "cause": "脏污覆盖", "severity": 5, "occurrence": 6, "detection": 3, "mitigation": "双传感器冗余"},
-            {"module": "显示屏", "failure_mode": "黑屏/花屏", "cause": "排线松动/静电", "severity": 4, "occurrence": 3, "detection": 5, "mitigation": "FPC连接器加固"},
-            {"module": "充电触点", "failure_mode": "氧化接触不良", "cause": "潮湿/腐蚀", "severity": 6, "occurrence": 7, "detection": 4, "mitigation": "镀金+密封设计"}
-        ]
+    "en": {
+        "title": "🔍 AI+DQA Product Risk Analysis",
+        "sidebar_title": "About",
+        "basis_items": ["25+ years R&D", "AI big data", "DFSS/Six Sigma"],
+        "analyst_name_label": "Analyst Name", "analyst_name_ph": "Enter name",
+        "analyst_title_label": "Title (Optional)", "analyst_title_ph": "e.g., R&D Director",
+        "api_status": "DeepSeek API Status",
+        "api_configured": "✅ Configured", "api_not_configured": "❌ Not configured",
+        "contact_info": "📞 **Contact:**  \n✉️ Email: Techlife2027@gmail.com",
+        "input_title": "📝 Product Risk Analysis",
+        "product_name": "Product Name", "product_name_ph": "e.g., High Bay LED Light",
+        "product_desc": "Design Description", "product_desc_ph": "e.g., 200W COB, active fan cooling, IP65",
+        "analyze_btn": "Start AI Deep Analysis",
+        "product_name_missing": "Please enter product name",
+        "generating": "AI is analyzing, please wait...",
+        "footer": "© 2026 Laurence Ku | AI+DQA Risk Analysis",
+        "db_status": "Database Status",
+        "db_connected": "✅ SQLite Local DB",
     }
 }
 
-# 通用默认风险（当产品类型未匹配时）
-DEFAULT_RISKS = [
-    {"module": "PCBA", "failure_mode": "虚焊", "cause": "回流焊温度不当", "severity": 7, "occurrence": 5, "detection": 6, "mitigation": "AOI检测+工艺优化"},
-    {"module": "连接器", "failure_mode": "接触不良", "cause": "插拔力不足", "severity": 6, "occurrence": 4, "detection": 5, "mitigation": "选用品牌连接器"},
-    {"module": "外壳", "failure_mode": "开裂", "cause": "应力集中", "severity": 5, "occurrence": 3, "detection": 4, "mitigation": "圆角设计+材料韧性"}
-]
+lang = st.session_state.lang
+t = TEXTS[lang]
+st.title(t["title"])
 
-# ==================== 辅助函数 ====================
-def product_decomposition(product_name: str, description: str) -> Dict:
-    """
-    产品分解：识别功能件、模块、零件
-    当前使用简单规则匹配，后续可替换为LLM调用
-    """
-    # 模拟分解结果
-    decomposition = {
-        "product": product_name,
-        "function_units": [],
-        "modules": [],
-        "parts": []
-    }
-    # 根据产品名称关键词判断类型
-    if "路灯" in product_name or "street light" in product_name.lower():
-        product_type = "LED路灯"
-        decomposition["function_units"] = ["光学", "电气", "热学", "结构"]
-        decomposition["modules"] = ["LED光源", "驱动电源", "透镜", "防水结构", "浪涌保护"]
-    elif "天棚灯" in product_name or "high bay" in product_name.lower():
-        product_type = "高功率天棚灯"
-        decomposition["function_units"] = ["光学", "电气", "热学", "结构", "控制"]
-        decomposition["modules"] = ["COB光源", "风扇", "驱动电源", "透镜阵列", "吊装结构"]
-    elif "筒灯" in product_name or "downlight" in product_name.lower():
-        product_type = "LED筒灯"
-        decomposition["function_units"] = ["光学", "电气", "热学", "结构"]
-        decomposition["modules"] = ["LED灯珠", "驱动电源", "弹簧卡扣", "扩散板"]
-    elif "洗地机" in product_name or "cleaner" in product_name.lower():
-        product_type = "智能洗地机"
-        decomposition["function_units"] = ["机械", "电气", "流体", "控制", "传感"]
-        decomposition["modules"] = ["滚刷电机", "水泵", "电池包", "污水箱传感器"]
-    else:
-        product_type = "general"
-        decomposition["function_units"] = ["电气", "机械"]
-        decomposition["modules"] = ["PCBA", "连接器", "外壳"]
-    
-    decomposition["product_type"] = product_type
-    return decomposition
+# 初始化数据库
+if "database" not in st.session_state:
+    st.session_state.database = RiskDatabase()
 
-def get_risks_from_knowledge(product_type: str) -> List[Dict]:
-    """从知识库获取风险列表（模拟图谱查询）"""
-    if product_type in PRODUCT_RISK_DB:
-        risks = PRODUCT_RISK_DB[product_type]["risks"]
-    else:
-        risks = DEFAULT_RISKS.copy()
-    # 计算RPN = Severity * Occurrence * Detection
-    for r in risks:
-        r["RPN"] = r["severity"] * r["occurrence"] * r["detection"]
-    # 按RPN降序排序，取前10
-    risks_sorted = sorted(risks, key=lambda x: x["RPN"], reverse=True)
-    return risks_sorted[:10]
-
-def generate_mitigation_strategy(risk_item: Dict) -> str:
-    """
-    生成缓解策略（模拟LLM生成）
-    可替换为真实LLM调用
-    """
-    # 模拟策略生成
-    module = risk_item["module"]
-    failure = risk_item["failure_mode"]
-    cause = risk_item["cause"]
-    base_mitigation = risk_item["mitigation"]
-    
-    strategy = f"""针对 **{module}** 的 **{failure}** 问题（原因：{cause}），建议如下策略：
-    
-1. **设计层面**：{base_mitigation}
-2. **仿真验证**：使用有限元分析/热仿真/电路仿真验证设计余量。
-3. **测试标准**：参考 IEC/GB 相关条款，增加 HALT/HASS 测试。
-4. **制程管控**：关键工艺参数 SPC 监控，首件确认。
-5. **售后反馈**：建立失效分析闭环，持续更新 DFMEA 数据库。
-
-**RPN 评分**：严重度 {risk_item['severity']} × 发生度 {risk_item['occurrence']} × 探测度 {risk_item['detection']} = **{risk_item['RPN']}**
-"""
-    return strategy
-
-# ==================== Streamlit UI ====================
-st.set_page_config(page_title="AI+DQA 风险分析助手", layout="wide")
-st.title("🔍 AI+DQA 产品风险分析原型")
-st.markdown("基于知识图谱和GNN的产品前端风险识别与策略推荐")
-
-with st.expander("📘 使用说明"):
-    st.markdown("""
-    1. 输入产品名称和设计描述（支持中英文）
-    2. 系统自动分解产品结构（功能件→模块→零件）
-    3. 匹配知识图谱，输出 Top 10 风险项（按 RPN 排序）
-    4. 点击“生成策略”查看详细设计建议
-    5. 可导出 FMEA 表格
-    """)
-
-# 侧边栏输入
+# ================== 侧边栏 ==================
 with st.sidebar:
-    st.header("📝 产品信息")
-    product_name = st.text_input("产品名称", value="高功率LED天棚灯")
-    product_desc = st.text_area("设计描述", value="功率200W，采用COB光源，主动风扇散热，IP65防护，0-10V调光")
-    analyze_btn = st.button("🚀 开始风险分析", type="primary")
+    st.markdown(f"## {t['sidebar_title']}")
+    for item in t["basis_items"]:
+        st.markdown(f"- {item}")
+    st.markdown("---")
+    analyst_name_input = st.text_input(t["analyst_name_label"], placeholder=t["analyst_name_ph"], key="analyst_name_input")
+    analyst_title_input = st.text_input(t["analyst_title_label"], placeholder=t["analyst_title_ph"], key="analyst_title_input")
+    st.session_state.analyst_name = analyst_name_input
+    st.session_state.analyst_title = analyst_title_input
+    if analyst_name_input:
+        st.markdown(f"**{t['analyst_name_label']}: {analyst_name_input}**")
+        if analyst_title_input:
+            st.markdown(f"_{analyst_title_input}_")
+    st.markdown("---")
+    st.markdown(f"**{t['api_status']}**")
+    has_api = bool(st.session_state.temp_api_key)
+    if has_api:
+        st.success(t["api_configured"])
+        st.caption(f"模型: {st.session_state.temp_model}")
+    else:
+        st.error(t["api_not_configured"])
+        st.caption("请在管理员设置中配置 API Key")
+    st.markdown("---")
+    st.markdown(f"**{t['db_status']}**")
+    st.info(t["db_connected"])
+    st.markdown("---")
+    st.markdown(t["contact_info"])
 
-# 主区域
-if analyze_btn:
-    if not product_name:
-        st.warning("请输入产品名称")
-        st.stop()
-    
-    # Step 1: 产品分解
-    with st.spinner("正在分解产品结构..."):
-        decomposition = product_decomposition(product_name, product_desc)
-    
-    st.subheader("📐 产品分解结果")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("产品", decomposition["product"])
-    col2.metric("功能件", ", ".join(decomposition["function_units"]))
-    col3.metric("主要模块", ", ".join(decomposition["modules"][:3]) + ("..." if len(decomposition["modules"])>3 else ""))
-    
-    # Step 2: 获取风险列表
-    with st.spinner("正在检索知识图谱风险项..."):
-        risks = get_risks_from_knowledge(decomposition["product_type"])
-    
-    st.subheader("⚠️ Top 10 潜在风险 (按RPN排序)")
-    
-    # 显示风险表格
-    df_risks = pd.DataFrame(risks)
-    df_display = df_risks[["module", "failure_mode", "cause", "severity", "occurrence", "detection", "RPN"]]
-    df_display.columns = ["模块", "失效模式", "原因", "严重度(S)", "发生度(O)", "探测度(D)", "RPN"]
-    st.dataframe(df_display, use_container_width=True)
-    
-    # Step 3: 策略生成（可展开每个风险）
-    st.subheader("💡 设计策略与缓解措施")
-    for idx, risk in enumerate(risks):
-        with st.expander(f"{idx+1}. {risk['module']} - {risk['failure_mode']} (RPN={risk['RPN']})"):
-            # 模拟生成策略（可替换为LLM调用）
-            strategy = generate_mitigation_strategy(risk)
-            st.markdown(strategy)
-            # 添加一个按钮模拟“AI深度分析”（未来可接入真实LLM）
-            if st.button(f"🤖 AI 深度分析", key=f"deep_{idx}"):
-                st.info("（演示版）深度分析将调用行业数据库和设计理论模型，输出更详细的设计参数建议。正式版中此功能由LLM+知识图谱实现。")
-    
-    # Step 4: 导出功能
-    st.subheader("📎 导出报告")
-    csv = df_risks.to_csv(index=False).encode('utf-8')
-    st.download_button("下载 FMEA 表格 (CSV)", data=csv, file_name=f"{product_name}_FMEA.csv", mime="text/csv")
-    
-    # 显示当前匹配的知识图谱类型
-    st.caption(f"当前知识库匹配类型：{decomposition['product_type']} | 数据来源：内置模拟知识库（后续可替换为真实Neo4j+GNN）")
+# ================== 主界面 ==================
+st.markdown(f"### {t['input_title']}")
+product_name = st.text_input(t["product_name"], placeholder=t["product_name_ph"])
+product_desc = st.text_area(t["product_desc"], placeholder=t["product_desc_ph"], height=100)
 
-else:
-    st.info("请在左侧输入产品信息，点击『开始风险分析』")
+col_center = st.columns([1, 2, 1])[1]
+with col_center:
+    st.markdown('<div class="main-analyze">', unsafe_allow_html=True)
+    if st.button(t["analyze_btn"], key="main_analyze_btn", type="primary"):
+        if not product_name:
+            st.error(t["product_name_missing"])
+        else:
+            with st.spinner(t["generating"]):
+                report_content = generate_ai_analysis(product_name, product_desc, st.session_state.database, lang)
+                # 组合显示内容
+                analyst_info = ""
+                if st.session_state.analyst_name:
+                    analyst_info = f"**{t['analyst_name_label']}:** {st.session_state.analyst_name}"
+                    if st.session_state.analyst_title:
+                        analyst_info += f" ({st.session_state.analyst_title})"
+                    analyst_info += "\n\n"
+                disclaimer = "> *此报告是基于有限信息生成的初步分析，仅供参考。*" if lang=="zh" else "> *This report is a preliminary analysis based on limited information, for reference only.*"
+                full_display = f"{analyst_info}{disclaimer}\n\n{report_content}"
+                st.markdown("---")
+                st.markdown('<div class="report-card">', unsafe_allow_html=True)
+                st.markdown("### " + ("AI赋能DQA-产品设计风险分析报告" if lang=="zh" else "AI-Enabled DQA Product Design Risk Analysis Report"))
+                st.markdown(full_display)
+                st.markdown('</div>', unsafe_allow_html=True)
+                # 提供 Word 下载
+                if report_content and DOCX_AVAILABLE:
+                    word_bytes = generate_word_report(
+                        product_name, product_desc,
+                        st.session_state.analyst_name, st.session_state.analyst_title,
+                        report_content, lang
+                    )
+                    file_name = f"{product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d')}.docx" if lang=="zh" else f"{product_name}_Risk_Analysis_Report_{datetime.now().strftime('%Y%m%d')}.docx"
+                    st.download_button(label="📥 下载 Word 报告" if lang=="zh" else "📥 Download Word Report", data=word_bytes, file_name=file_name, mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                elif not DOCX_AVAILABLE:
+                    st.info("如需 Word 报告，请安装 python-docx: pip install python-docx")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-# 页脚
 st.markdown("---")
-st.caption("AI+DQA 原型 v0.1 | 技术路线：本体论+知识图谱+GNN | 演示版本，数据为模拟")
+st.caption(t["footer"])
