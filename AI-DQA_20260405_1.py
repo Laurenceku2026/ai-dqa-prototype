@@ -774,38 +774,60 @@ def markdown_to_docx(md_text: str, doc: Document):
         i += 1
 
 # ================== 生成 Word 报告 ==================
-def generate_word_report(product_name: str, product_desc: str, analyst_name: str, analyst_title: str, report_content: str) -> BytesIO:
+def generate_word_report(product_name: str, product_desc: str, analyst_name: str, analyst_title: str, report_content: str, lang: str = "zh") -> BytesIO:
     doc = Document()
     for section in doc.sections:
         section.top_margin = Inches(1)
         section.bottom_margin = Inches(1)
         section.left_margin = Inches(1)
         section.right_margin = Inches(1)
-    title = doc.add_heading("AI赋能DQA-产品设计风险分析报告", level=1)
+
+    # 根据语言选择标题和标签
+    if lang == "en":
+        title_text = "AI-Enabled DQA Product Design Risk Analysis Report"
+        url_label = "Report online address:"
+        table_labels = {
+            "product_name": "Product Name",
+            "design_desc": "Design Description",
+            "date": "Report Date",
+            "analyst": "Analyst"
+        }
+    else:
+        title_text = "AI赋能DQA-产品设计风险分析报告"
+        url_label = "报告在线地址："
+        table_labels = {
+            "product_name": "产品名称",
+            "design_desc": "设计描述",
+            "date": "报告日期",
+            "analyst": "分析人"
+        }
+
+    title = doc.add_heading(title_text, level=1)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    url_para = doc.add_paragraph("报告在线地址：")
+    url_para = doc.add_paragraph(url_label)
     url_para.add_run("https://ai-app-design-dfmea.streamlit.app/").italic = True
     doc.add_paragraph()
+
     info_table = doc.add_table(rows=4, cols=2)
     info_table.style = 'Table Grid'
-    info_table.cell(0, 0).text = "产品名称"
+    info_table.cell(0, 0).text = table_labels["product_name"]
     info_table.cell(0, 1).text = product_name
-    info_table.cell(1, 0).text = "设计描述"
+    info_table.cell(1, 0).text = table_labels["design_desc"]
     info_table.cell(1, 1).text = product_desc
-    info_table.cell(2, 0).text = "报告日期"
+    info_table.cell(2, 0).text = table_labels["date"]
     info_table.cell(2, 1).text = datetime.now().strftime("%Y-%m-%d")
-    analyst_str = analyst_name if analyst_name else "未填写"
+    analyst_str = analyst_name if analyst_name else ("Not filled" if lang == "en" else "未填写")
     if analyst_title:
         analyst_str += f" ({analyst_title})"
-    info_table.cell(3, 0).text = "分析人"
+    info_table.cell(3, 0).text = table_labels["analyst"]
     info_table.cell(3, 1).text = analyst_str
     doc.add_paragraph()
+
     markdown_to_docx(report_content, doc)
     doc_bytes = BytesIO()
     doc.save(doc_bytes)
     doc_bytes.seek(0)
     return doc_bytes
-
 # ================== AI 分析（双向检索，语言跟随界面） ==================
 def generate_ai_analysis_content(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase, lang: str = "zh") -> str:
     search_keywords = f"{product_name} {product_desc}"
@@ -1124,7 +1146,7 @@ with col_center:
                 
                 # Word 下载
                 if report_content:
-                    word_bytes = generate_word_report(product_name, product_desc, analyst_name, analyst_title, report_content)
+                    word_bytes = generate_word_report(product_name, product_desc, analyst_name, analyst_title, report_content, lang=st.session_state.lang)
                     st.download_button(
                         label="📥 下载 Word 报告" if lang == "zh" else "📥 Download Word Report",
                         data=word_bytes,
