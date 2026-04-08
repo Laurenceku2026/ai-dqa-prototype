@@ -973,7 +973,7 @@ def admin_settings_dialog():
         st.rerun()
 
 # ================== 右上角按钮 ==================
-col_left, col_spacer, col_zh, col_en, col_gear = st.columns([5, 2, 1.5, 1.8, 1])
+col_left, col_spacer, col_zh, col_en, col_gear = st.columns([5, 2, 1.8, 1.8, 1])
 with col_zh:
     if st.button("🇨🇳 中文", key="zh_btn", use_container_width=True):
         st.session_state.lang = "zh"
