@@ -1093,13 +1093,20 @@ with st.sidebar:
     for item in t["basis_items"]:
         st.markdown(f"- {item}")
     st.markdown("---")
-    analyst_name = st.text_input(t["analyst_name_label"], placeholder=t["analyst_name_ph"])
-    analyst_title = st.text_input(t["analyst_title_label"], placeholder=t["analyst_title_ph"])
+    
+    analyst_name = st.text_input(t["analyst_name_label"], placeholder=t["analyst_name_ph"], key="analyst_name_input")
+    analyst_title = st.text_input(t["analyst_title_label"], placeholder=t["analyst_title_ph"], key="analyst_title_input")
+    
+    # 存储到 session state，供下载报告时使用
+    st.session_state.analyst_name = analyst_name
+    st.session_state.analyst_title = analyst_title
+    
     if analyst_name:
         st.markdown(f"**{t['analyst_name_label']}: {analyst_name}**")
         if analyst_title:
             st.markdown(f"_{analyst_title}_")
     st.markdown("---")
+    
     st.markdown(f"**{t['api_status']}**")
     has_api = bool(st.session_state.temp_api_key or st.secrets.get("DEEPSEEK_API_KEY"))
     if has_api:
@@ -1109,9 +1116,11 @@ with st.sidebar:
     else:
         st.error(t["api_not_configured"])
     st.markdown("---")
+    
     st.markdown(f"**{t['db_status']}**")
     st.info(t["db_connected"])
     st.markdown("---")
+    
     st.markdown(t["contact_info"])
 
 # ================== 主界面 ==================
@@ -1152,14 +1161,29 @@ with col_center:
                 st.markdown('</div>', unsafe_allow_html=True)
                 
                 # Word 下载
-                if report_content:
-                    word_bytes = generate_word_report(product_name, product_desc, analyst_name, analyst_title, report_content)
-                    st.download_button(
-                        label="📥 下载 Word 报告" if lang == "zh" else "📥 Download Word Report",
-                        data=word_bytes,
-                        file_name=f"{product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d')}.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    )
+                # Word 下载
+if report_content:
+    # 从 session state 获取分析人信息（确保侧边栏填写的值被传递）
+    analyst_name = st.session_state.get("analyst_name", "")
+    analyst_title = st.session_state.get("analyst_title", "")
+    
+    word_bytes = generate_word_report(
+        product_name, product_desc, analyst_name, analyst_title, report_content,
+        lang=st.session_state.lang
+    )
+    
+    # 根据语言生成不同的文件名
+    if st.session_state.lang == "en":
+        file_name = f"{product_name}_Risk_Analysis_Report_{datetime.now().strftime('%Y%m%d')}.docx"
+    else:
+        file_name = f"{product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d')}.docx"
+    
+    st.download_button(
+        label="📥 下载 Word 报告" if st.session_state.lang == "zh" else "📥 Download Word Report",
+        data=word_bytes,
+        file_name=file_name,
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
     st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("---")
