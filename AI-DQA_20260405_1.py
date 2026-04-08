@@ -110,7 +110,7 @@ div[data-testid="column"]:has(button span:contains("🇬🇧")) {
 }
 /* 确保 emoji 正常显示 */
 .stButton button span {
-    font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
+    font-family: "Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", "Android Emoji", "EmojiOne Color", "Twemoji Mozilla", sans-serif;
 }
 </style>
 """, unsafe_allow_html=True)
