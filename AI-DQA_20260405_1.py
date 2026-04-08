@@ -96,6 +96,22 @@ st.markdown("""
     .report-card th {
         background-color: #f2f2f2;
     }
+    /* 右上角中英文按钮 - 防止换行和 emoji 截断 */
+div[data-testid="column"]:has(button span:contains("🇨🇳")),
+div[data-testid="column"]:has(button span:contains("🇬🇧")) {
+    min-width: 120px;
+}
+.stButton button:has(span:contains("🇨🇳")),
+.stButton button:has(span:contains("🇬🇧")) {
+    min-width: 120px !important;
+    white-space: nowrap !important;
+    font-size: 16px !important;
+    padding: 0.5rem 0.8rem !important;
+}
+/* 确保 emoji 正常显示 */
+.stButton button span {
+    font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
+}
 </style>
 """, unsafe_allow_html=True)
 
