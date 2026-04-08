@@ -18,15 +18,15 @@ from docx.oxml.ns import qn
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# 自定义CSS（只保留按钮样式和卡片样式，不干预布局宽度）
+# 自定义CSS
 st.markdown("""
 <style>
-    /* 中英文按钮红底，宽度加大，防止换行 */
+    /* 中英文按钮红底，防止换行 */
     .stButton button:has(span:contains("中文")),
     .stButton button:has(span:contains("English")) {
         background-color: #ff4b4b !important;
         color: white !important;
-        font-size: 18px !important;
+        font-size: 16px !important;
         font-weight: bold !important;
         border-radius: 40px !important;
         padding: 0.5rem 1rem !important;
@@ -34,7 +34,7 @@ st.markdown("""
         border: none !important;
         white-space: nowrap !important;
     }
-    /* 主分析按钮超大居中 */
+    /* 主分析按钮 */
     .main-analyze button {
         font-size: 36px !important;
         padding: 20px 60px !important;
@@ -56,7 +56,7 @@ st.markdown("""
         text-align: center;
         margin: 30px 0;
     }
-    /* 齿轮按钮默认样式 */
+    /* 齿轮按钮 */
     .stButton button:has(span:contains("⚙️")) {
         background-color: transparent !important;
         color: #31333f !important;
@@ -64,11 +64,7 @@ st.markdown("""
         border-radius: 8px !important;
         box-shadow: none !important;
     }
-    .stButton button:has(span:contains("⚙️")):hover {
-        background-color: #f0f2f6 !important;
-        transform: none !important;
-    }
-    /* 侧边栏按钮保持原样 */
+    /* 侧边栏按钮 */
     section[data-testid="stSidebar"] .stButton button {
         background-color: #f0f2f6 !important;
         color: #31333f !important;
@@ -76,7 +72,7 @@ st.markdown("""
         border-radius: 8px !important;
         box-shadow: none !important;
     }
-    /* 报告卡片样式 */
+    /* 报告卡片 */
     .report-card {
         background-color: #f8f9fa;
         padding: 1.5rem;
@@ -96,22 +92,14 @@ st.markdown("""
     .report-card th {
         background-color: #f2f2f2;
     }
-    /* 右上角中英文按钮 - 防止换行和 emoji 截断 */
-div[data-testid="column"]:has(button span:contains("🇨🇳")),
-div[data-testid="column"]:has(button span:contains("🇬🇧")) {
-    min-width: 120px;
-}
-.stButton button:has(span:contains("🇨🇳")),
-.stButton button:has(span:contains("🇬🇧")) {
-    min-width: 120px !important;
-    white-space: nowrap !important;
-    font-size: 16px !important;
-    padding: 0.5rem 0.8rem !important;
-}
-/* 确保 emoji 正常显示 */
-.stButton button span {
-    font-family: "Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", "Android Emoji", "EmojiOne Color", "Twemoji Mozilla", sans-serif;
-}
+    /* 右上角按钮列宽稳定 */
+    div[data-testid="column"]:nth-child(3) button,
+    div[data-testid="column"]:nth-child(4) button {
+        min-width: 120px !important;
+    }
+    .stButton button span {
+        font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -159,7 +147,7 @@ class RiskDatabase:
     def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
         raise NotImplementedError
 
-# ================== SQLite 实现（双语知识库 + 双向检索） ==================
+# ================== SQLite 实现（双语知识库） ==================
 class SQLiteDatabase(RiskDatabase):
     def __init__(self):
         self.conn = sqlite3.connect('app_data.db', check_same_thread=False)
@@ -364,7 +352,6 @@ class Neo4jDatabase(RiskDatabase):
             self.driver = None
 
     def _init_constraints(self):
-        """创建约束和索引以提高检索性能"""
         if not self.driver:
             return
         with self.driver.session() as session:
@@ -379,23 +366,19 @@ class Neo4jDatabase(RiskDatabase):
                 pass
 
     def _migrate_existing_knowledge(self):
-        """为已有知识节点补充 content_en 属性（如果缺失）"""
         if not self.driver:
             return
         with self.driver.session() as session:
-            # 查找没有 content_en 属性的知识节点
             result = session.run("MATCH (k:Knowledge) WHERE k.content_en IS NULL RETURN k.category AS cat, k.content AS content, id(k) AS id")
             records = list(result)
             for rec in records:
                 cat = rec["cat"]
                 zh_text = rec["content"]
-                # 判断是否为中文：若包含中文字符则视为中文，否则视为英文
                 if re.search(r'[\u4e00-\u9fff]', zh_text):
                     en_text = translate_text(zh_text, "en")
                 else:
-                    en_text = zh_text  # 已经是英文，保持不变
+                    en_text = zh_text
                     zh_text = translate_text(zh_text, "zh")
-                # 更新节点
                 session.run("MATCH (k:Knowledge) WHERE id(k) = $id SET k.content_en = $en, k.content = $zh",
                             {"id": rec["id"], "en": en_text, "zh": zh_text})
 
@@ -465,7 +448,6 @@ class Neo4jDatabase(RiskDatabase):
     def add_knowledge(self, category: str, content: str):
         if not self.driver:
             return
-        # 自动生成双语内容
         lang = st.session_state.lang
         if lang == "zh":
             zh_text = content
@@ -473,7 +455,6 @@ class Neo4jDatabase(RiskDatabase):
         else:
             en_text = content
             zh_text = translate_text(content, "zh")
-        # 生成唯一ID（可使用UUID或简单自增，这里用时间戳+随机）
         import uuid
         node_id = str(uuid.uuid4())
         cypher = """
@@ -520,7 +501,6 @@ class Neo4jDatabase(RiskDatabase):
     def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
         if not self.driver or not keywords.strip():
             return []
-        # 双向检索：匹配 content 或 content_en
         cypher = """
             MATCH (k:Knowledge)
             WHERE k.content CONTAINS $kw OR k.content_en CONTAINS $kw
@@ -538,7 +518,6 @@ class Neo4jDatabase(RiskDatabase):
         return [item for item in items if item]
 
     def load_initial_data(self):
-        # 可选：从SQLite同步初始数据到Neo4j，但为避免重复，留空由HybridDatabase统一初始化
         pass
 
 # ================== 混合数据库 ==================
@@ -574,11 +553,9 @@ class HybridDatabase(RiskDatabase):
         return sql_mit
 
     def get_knowledge_by_category(self, category: str) -> List[str]:
-        # 优先使用 SQLite（数据最全）
         return self.sqlite.get_knowledge_by_category(category)
 
     def add_knowledge(self, category: str, content: str):
-        # 同时添加到两个数据库（Neo4j内部会自动翻译）
         self.sqlite.add_knowledge(category, content)
         if self.neo4j_available:
             self.neo4j.add_knowledge(category, content)
@@ -598,30 +575,22 @@ class HybridDatabase(RiskDatabase):
 
     def load_initial_data(self):
         self.sqlite.load_initial_data()
-        # 可选：将SQLite中的初始知识同步到Neo4j（如果Neo4j为空）
         if self.neo4j_available:
-            # 检查Neo4j中是否有知识节点
             all_neo = self.neo4j.get_all_knowledge()
             if not any(all_neo.values()):
-                # 从SQLite同步所有知识到Neo4j
-                sql_all = self.sqlite.get_all_knowledge()  # 返回当前语言的知识，但我们需要双语
-                # 直接读取SQLite原始双语数据
                 conn = self.sqlite.conn
                 cursor = conn.cursor()
                 cursor.execute("SELECT category, content, content_en FROM knowledge_base")
                 rows = cursor.fetchall()
                 for cat, zh, en in rows:
                     if zh and en:
-                        # 直接创建双语节点
                         import uuid
                         node_id = str(uuid.uuid4())
                         with self.neo4j.driver.session() as session:
                             session.run("CREATE (k:Knowledge {id: $id, category: $cat, content: $zh, content_en: $en})",
                                         {"id": node_id, "cat": cat, "zh": zh, "en": en})
-        # 行业风险数据等可以按需同步，但为了简洁，暂不处理
 
     def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
-        # 优先使用 SQLite（更快更全），也可以合并 Neo4j 结果，但为避免重复，只用 SQLite
         return self.sqlite.search_knowledge(keywords, limit)
 
 # ================== 数据库工厂 ==================
@@ -683,7 +652,7 @@ def web_search(query: str, max_results=3) -> str:
     except Exception as e:
         return f"搜索失败: {str(e)}"
 
-# ================== 清理 AI 响应（支持中英文） ==================
+# ================== 清理 AI 响应 ==================
 def clean_ai_response(text: str, lang: str = "zh") -> str:
     if lang == "en":
         patterns = [
@@ -775,12 +744,8 @@ def markdown_to_docx(md_text: str, doc: Document):
 
 # ================== 生成 Word 报告 ==================
 def generate_word_report(product_name: str, product_desc: str, analyst_name: str, analyst_title: str, report_content: str, lang: str = "zh") -> BytesIO:
-    # 强制从 session state 获取当前语言（忽略传入参数，确保与界面一致）
+    # 强制使用当前 session 语言
     current_lang = st.session_state.get("lang", "zh")
-    
-    # 调试输出（部署后可删除或注释）
-    st.write(f"DEBUG: current_lang = {current_lang}")
-    
     doc = Document()
     for section in doc.sections:
         section.top_margin = Inches(1)
@@ -797,7 +762,7 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
             "date": "Report Date",
             "analyst": "Analyst"
         }
-        analyst_placeholder = "Not filled"
+        placeholder = "Not filled"
     else:
         title_text = "AI赋能DQA-产品设计风险分析报告"
         url_label = "报告在线地址："
@@ -807,7 +772,7 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
             "date": "报告日期",
             "analyst": "分析人"
         }
-        analyst_placeholder = "未填写"
+        placeholder = "未填写"
 
     title = doc.add_heading(title_text, level=1)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -823,7 +788,7 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
     info_table.cell(1, 1).text = product_desc
     info_table.cell(2, 0).text = table_labels["date"]
     info_table.cell(2, 1).text = datetime.now().strftime("%Y-%m-%d")
-    analyst_str = analyst_name if analyst_name else analyst_placeholder
+    analyst_str = analyst_name if analyst_name else placeholder
     if analyst_title:
         analyst_str += f" ({analyst_title})"
     info_table.cell(3, 0).text = table_labels["analyst"]
@@ -835,7 +800,8 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
     doc.save(doc_bytes)
     doc_bytes.seek(0)
     return doc_bytes
-# ================== AI 分析（双向检索，语言跟随界面） ==================
+
+# ================== AI 分析 ==================
 def generate_ai_analysis_content(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase, lang: str = "zh") -> str:
     search_keywords = f"{product_name} {product_desc}"
     kb_items = db.search_knowledge(search_keywords, limit=10)
@@ -864,7 +830,11 @@ Design Description: {product_desc}
 === Web Search Results ===
 {web_context if web_context else "Not enabled"}
 
-Output the risk analysis report directly, without any preamble (e.g., "Okay", "Based on the above information"). The report MUST include:
+IMPORTANT INSTRUCTIONS:
+- Output the risk analysis report directly, without any preamble (e.g., "Okay", "Based on the above information").
+- Do NOT add any product information table (such as product name, design description, report date, analyst). Start directly with "### 1. Product Decomposition".
+- Use ONLY English. Do not output any Chinese characters.
+- The report MUST include exactly the following three sections:
 ### 1. Product Decomposition
 ### 2. Top 5 Potential Risks (Table: Module, Failure Mode, Cause, Severity, Occurrence, Detection, RPN)
 ### 3. Key Risk Mitigation Strategies (for the top 3 risks by RPN)
@@ -1015,7 +985,7 @@ with col_gear:
     if st.button("⚙️", key="settings_btn", use_container_width=True):
         admin_settings_dialog()
 
-# ================== 多语言文本（界面文字） ==================
+# ================== 多语言文本 ==================
 TEXTS = {
     "zh": {
         "title": "🔍 AI+DQA 产品风险分析系统",
@@ -1037,12 +1007,7 @@ TEXTS = {
         "analyze_btn": "开始AI深度分析",
         "product_name_missing": "请填写产品名称",
         "generating": "AI 正在分析中，请稍候...",
-        "decomposition_title": "📐 产品分解结果",
-        "risks_title": "⚠️ Top 潜在风险 (按RPN排序)",
-        "strategy_title": "💡 设计策略与缓解措施",
-        "download_btn": "📎 导出风险表格 (CSV)",
         "footer": "© 2026 Laurence Ku | AI+DQA 风险分析",
-        "no_risks": "未检索到风险数据，请检查产品类型或先加载基础数据。",
         "db_status": "数据库状态",
         "db_connected": "✅ 混合模式 (SQLite + Neo4j)",
     },
@@ -1066,12 +1031,7 @@ TEXTS = {
         "analyze_btn": "Start AI Deep Analysis",
         "product_name_missing": "Please enter product name",
         "generating": "AI is analyzing, please wait...",
-        "decomposition_title": "📐 Product Decomposition",
-        "risks_title": "⚠️ Top Potential Risks (by RPN)",
-        "strategy_title": "💡 Design Strategies & Mitigations",
-        "download_btn": "📎 Export Risk Table (CSV)",
         "footer": "© 2026 Laurence Ku | AI+DQA Risk Analysis",
-        "no_risks": "No risk data found. Please check product type or load base data first.",
         "db_status": "Database Status",
         "db_connected": "✅ Hybrid Mode (SQLite + Neo4j)",
     }
@@ -1079,10 +1039,9 @@ TEXTS = {
 
 lang = st.session_state.lang
 t = TEXTS[lang]
-
 st.title(t["title"])
 
-# 初始化全局数据库实例
+# 初始化数据库
 if "database" not in st.session_state:
     st.session_state.database = get_database()
     st.session_state.database.load_initial_data()
@@ -1094,17 +1053,17 @@ with st.sidebar:
         st.markdown(f"- {item}")
     st.markdown("---")
     
-    analyst_name = st.text_input(t["analyst_name_label"], placeholder=t["analyst_name_ph"], key="analyst_name_input")
-    analyst_title = st.text_input(t["analyst_title_label"], placeholder=t["analyst_title_ph"], key="analyst_title_input")
+    analyst_name_input = st.text_input(t["analyst_name_label"], placeholder=t["analyst_name_ph"], key="analyst_name_input")
+    analyst_title_input = st.text_input(t["analyst_title_label"], placeholder=t["analyst_title_ph"], key="analyst_title_input")
     
-    # 存储到 session state，供下载报告时使用
-    st.session_state.analyst_name = analyst_name
-    st.session_state.analyst_title = analyst_title
+    # 存储到 session state
+    st.session_state.analyst_name = analyst_name_input
+    st.session_state.analyst_title = analyst_title_input
     
-    if analyst_name:
-        st.markdown(f"**{t['analyst_name_label']}: {analyst_name}**")
-        if analyst_title:
-            st.markdown(f"_{analyst_title}_")
+    if analyst_name_input:
+        st.markdown(f"**{t['analyst_name_label']}: {analyst_name_input}**")
+        if analyst_title_input:
+            st.markdown(f"_{analyst_title_input}_")
     st.markdown("---")
     
     st.markdown(f"**{t['api_status']}**")
@@ -1116,11 +1075,9 @@ with st.sidebar:
     else:
         st.error(t["api_not_configured"])
     st.markdown("---")
-    
     st.markdown(f"**{t['db_status']}**")
     st.info(t["db_connected"])
     st.markdown("---")
-    
     st.markdown(t["contact_info"])
 
 # ================== 主界面 ==================
@@ -1132,64 +1089,57 @@ col_center = st.columns([1, 2, 1])[1]
 with col_center:
     st.markdown('<div class="main-analyze">', unsafe_allow_html=True)
     if st.button(t["analyze_btn"], key="main_analyze_btn", type="primary"):
-    if not product_name:
-        st.error(t["product_name_missing"])
-    else:
-        db = st.session_state.database
-        with st.spinner(t["generating"]):
-            # 根据当前界面语言生成对应语言的报告
-            report_content = generate_ai_analysis_content(
-                product_name, product_desc,
-                st.session_state.enable_web_search,
-                db,
-                lang=st.session_state.lang
-            )
-            
-            # 页面显示：手动添加分析人和免责声明
-            if analyst_name and analyst_name.strip():
-                if analyst_title and analyst_title.strip():
-                    author_line = f"分析人：{analyst_name.strip()} ({analyst_title.strip()})" if lang == "zh" else f"Analyst: {analyst_name.strip()} ({analyst_title.strip()})"
-                else:
-                    author_line = f"分析人：{analyst_name.strip()}" if lang == "zh" else f"Analyst: {analyst_name.strip()}"
-            else:
-                author_line = "AI生成的风险分析报告" if lang == "zh" else "AI-generated risk analysis report"
-            disclaimer_line = "此报告是基于以上提供的有限信息，结合行业数据库和联网搜索结果生成的初步分析，仅供参考。" if lang == "zh" else "This report is a preliminary analysis based on the limited information provided, combined with industry databases and web search results, for reference only."
-            full_report_display = f"{author_line}\n\n{disclaimer_line}\n\n{report_content}"
-            
-            # 添加分隔线
-            st.markdown("---")
-            
-            # 卡片容器
-            st.markdown('<div class="report-card">', unsafe_allow_html=True)
-            st.markdown("### AI赋能DQA-产品设计风险分析报告" if lang == "zh" else "### AI-Enabled DQA Product Design Risk Analysis Report")
-            st.markdown(full_report_display)
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Word 下载
-            if report_content:
-                # 从 session state 获取分析人信息（确保侧边栏填写的值被传递）
-                saved_analyst_name = st.session_state.get("analyst_name", "")
-                saved_analyst_title = st.session_state.get("analyst_title", "")
-                
-                word_bytes = generate_word_report(
+        if not product_name:
+            st.error(t["product_name_missing"])
+        else:
+            db = st.session_state.database
+            with st.spinner(t["generating"]):
+                # 生成 AI 报告
+                report_content = generate_ai_analysis_content(
                     product_name, product_desc,
-                    saved_analyst_name, saved_analyst_title,
-                    report_content,
+                    st.session_state.enable_web_search,
+                    db,
                     lang=st.session_state.lang
                 )
                 
-                # 根据语言生成不同的文件名
-                if st.session_state.lang == "en":
-                    file_name = f"{product_name}_Risk_Analysis_Report_{datetime.now().strftime('%Y%m%d')}.docx"
-                else:
-                    file_name = f"{product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d')}.docx"
+                # 从 session state 获取分析人信息
+                saved_name = st.session_state.get("analyst_name", "")
+                saved_title = st.session_state.get("analyst_title", "")
                 
-                st.download_button(
-                    label="📥 下载 Word 报告" if lang == "zh" else "📥 Download Word Report",
-                    data=word_bytes,
-                    file_name=file_name,
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                )
+                if saved_name and saved_name.strip():
+                    if saved_title and saved_title.strip():
+                        author_line = f"分析人：{saved_name.strip()} ({saved_title.strip()})" if lang == "zh" else f"Analyst: {saved_name.strip()} ({saved_title.strip()})"
+                    else:
+                        author_line = f"分析人：{saved_name.strip()}" if lang == "zh" else f"Analyst: {saved_name.strip()}"
+                else:
+                    author_line = "AI生成的风险分析报告" if lang == "zh" else "AI-generated risk analysis report"
+                disclaimer_line = "此报告是基于以上提供的有限信息，结合行业数据库和联网搜索结果生成的初步分析，仅供参考。" if lang == "zh" else "This report is a preliminary analysis based on the limited information provided, combined with industry databases and web search results, for reference only."
+                full_report_display = f"{author_line}\n\n{disclaimer_line}\n\n{report_content}"
+                
+                st.markdown("---")
+                st.markdown('<div class="report-card">', unsafe_allow_html=True)
+                st.markdown("### AI赋能DQA-产品设计风险分析报告" if lang == "zh" else "### AI-Enabled DQA Product Design Risk Analysis Report")
+                st.markdown(full_report_display)
+                st.markdown('</div>', unsafe_allow_html=True)
+                
+                # Word 下载
+                if report_content:
+                    word_bytes = generate_word_report(
+                        product_name, product_desc,
+                        saved_name, saved_title,
+                        report_content,
+                        lang=st.session_state.lang
+                    )
+                    if st.session_state.lang == "en":
+                        file_name = f"{product_name}_Risk_Analysis_Report_{datetime.now().strftime('%Y%m%d')}.docx"
+                    else:
+                        file_name = f"{product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d')}.docx"
+                    st.download_button(
+                        label="📥 下载 Word 报告" if lang == "zh" else "📥 Download Word Report",
+                        data=word_bytes,
+                        file_name=file_name,
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
     st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("---")
