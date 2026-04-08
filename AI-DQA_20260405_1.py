@@ -30,7 +30,7 @@ st.markdown("""
         font-weight: bold !important;
         border-radius: 40px !important;
         padding: 0.5rem 1rem !important;
-        min-width: 100px !important;
+        min-width: 120px !important;
         border: none !important;
         white-space: nowrap !important;
     }
