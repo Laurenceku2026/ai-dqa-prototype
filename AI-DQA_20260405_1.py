@@ -775,6 +775,12 @@ def markdown_to_docx(md_text: str, doc: Document):
 
 # ================== 生成 Word 报告 ==================
 def generate_word_report(product_name: str, product_desc: str, analyst_name: str, analyst_title: str, report_content: str, lang: str = "zh") -> BytesIO:
+    # 强制从 session state 获取当前语言（忽略传入参数，确保与界面一致）
+    current_lang = st.session_state.get("lang", "zh")
+    
+    # 调试输出（部署后可删除或注释）
+    st.write(f"DEBUG: current_lang = {current_lang}")
+    
     doc = Document()
     for section in doc.sections:
         section.top_margin = Inches(1)
@@ -782,8 +788,7 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
         section.left_margin = Inches(1)
         section.right_margin = Inches(1)
 
-    # 根据语言选择标题和标签
-    if lang == "en":
+    if current_lang == "en":
         title_text = "AI-Enabled DQA Product Design Risk Analysis Report"
         url_label = "Report online address:"
         table_labels = {
@@ -792,6 +797,7 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
             "date": "Report Date",
             "analyst": "Analyst"
         }
+        analyst_placeholder = "Not filled"
     else:
         title_text = "AI赋能DQA-产品设计风险分析报告"
         url_label = "报告在线地址："
@@ -801,6 +807,7 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
             "date": "报告日期",
             "analyst": "分析人"
         }
+        analyst_placeholder = "未填写"
 
     title = doc.add_heading(title_text, level=1)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -816,7 +823,7 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
     info_table.cell(1, 1).text = product_desc
     info_table.cell(2, 0).text = table_labels["date"]
     info_table.cell(2, 1).text = datetime.now().strftime("%Y-%m-%d")
-    analyst_str = analyst_name if analyst_name else ("Not filled" if lang == "en" else "未填写")
+    analyst_str = analyst_name if analyst_name else analyst_placeholder
     if analyst_title:
         analyst_str += f" ({analyst_title})"
     info_table.cell(3, 0).text = table_labels["analyst"]
@@ -1146,7 +1153,7 @@ with col_center:
                 
                 # Word 下载
                 if report_content:
-                    word_bytes = generate_word_report(product_name, product_desc, analyst_name, analyst_title, report_content, lang=st.session_state.lang)
+                    word_bytes = generate_word_report(product_name, product_desc, analyst_name, analyst_title, report_content)
                     st.download_button(
                         label="📥 下载 Word 报告" if lang == "zh" else "📥 Download Word Report",
                         data=word_bytes,
