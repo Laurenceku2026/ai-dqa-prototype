@@ -1132,58 +1132,64 @@ col_center = st.columns([1, 2, 1])[1]
 with col_center:
     st.markdown('<div class="main-analyze">', unsafe_allow_html=True)
     if st.button(t["analyze_btn"], key="main_analyze_btn", type="primary"):
-        if not product_name:
-            st.error(t["product_name_missing"])
-        else:
-            db = st.session_state.database
-            with st.spinner(t["generating"]):
-                # 根据当前界面语言生成对应语言的报告
-                report_content = generate_ai_analysis_content(product_name, product_desc, st.session_state.enable_web_search, db, lang=st.session_state.lang)
-                
-                # 页面显示：手动添加分析人和免责声明
-                if analyst_name and analyst_name.strip():
-                    if analyst_title and analyst_title.strip():
-                        author_line = f"分析人：{analyst_name.strip()} ({analyst_title.strip()})" if lang == "zh" else f"Analyst: {analyst_name.strip()} ({analyst_title.strip()})"
-                    else:
-                        author_line = f"分析人：{analyst_name.strip()}" if lang == "zh" else f"Analyst: {analyst_name.strip()}"
-                else:
-                    author_line = "AI生成的风险分析报告" if lang == "zh" else "AI-generated risk analysis report"
-                disclaimer_line = "此报告是基于以上提供的有限信息，结合行业数据库和联网搜索结果生成的初步分析，仅供参考。" if lang == "zh" else "This report is a preliminary analysis based on the limited information provided, combined with industry databases and web search results, for reference only."
-                full_report_display = f"{author_line}\n\n{disclaimer_line}\n\n{report_content}"
-                
-                # 添加分隔线
-                st.markdown("---")
-                
-                # 卡片容器
-                st.markdown('<div class="report-card">', unsafe_allow_html=True)
-                st.markdown("### AI赋能DQA-产品设计风险分析报告" if lang == "zh" else "### AI-Enabled DQA Product Design Risk Analysis Report")
-                st.markdown(full_report_display)
-                st.markdown('</div>', unsafe_allow_html=True)
-                
-                # Word 下载
-                # Word 下载
-if report_content:
-    # 从 session state 获取分析人信息（确保侧边栏填写的值被传递）
-    analyst_name = st.session_state.get("analyst_name", "")
-    analyst_title = st.session_state.get("analyst_title", "")
-    
-    word_bytes = generate_word_report(
-        product_name, product_desc, analyst_name, analyst_title, report_content,
-        lang=st.session_state.lang
-    )
-    
-    # 根据语言生成不同的文件名
-    if st.session_state.lang == "en":
-        file_name = f"{product_name}_Risk_Analysis_Report_{datetime.now().strftime('%Y%m%d')}.docx"
+    if not product_name:
+        st.error(t["product_name_missing"])
     else:
-        file_name = f"{product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d')}.docx"
-    
-    st.download_button(
-        label="📥 下载 Word 报告" if st.session_state.lang == "zh" else "📥 Download Word Report",
-        data=word_bytes,
-        file_name=file_name,
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    )
+        db = st.session_state.database
+        with st.spinner(t["generating"]):
+            # 根据当前界面语言生成对应语言的报告
+            report_content = generate_ai_analysis_content(
+                product_name, product_desc,
+                st.session_state.enable_web_search,
+                db,
+                lang=st.session_state.lang
+            )
+            
+            # 页面显示：手动添加分析人和免责声明
+            if analyst_name and analyst_name.strip():
+                if analyst_title and analyst_title.strip():
+                    author_line = f"分析人：{analyst_name.strip()} ({analyst_title.strip()})" if lang == "zh" else f"Analyst: {analyst_name.strip()} ({analyst_title.strip()})"
+                else:
+                    author_line = f"分析人：{analyst_name.strip()}" if lang == "zh" else f"Analyst: {analyst_name.strip()}"
+            else:
+                author_line = "AI生成的风险分析报告" if lang == "zh" else "AI-generated risk analysis report"
+            disclaimer_line = "此报告是基于以上提供的有限信息，结合行业数据库和联网搜索结果生成的初步分析，仅供参考。" if lang == "zh" else "This report is a preliminary analysis based on the limited information provided, combined with industry databases and web search results, for reference only."
+            full_report_display = f"{author_line}\n\n{disclaimer_line}\n\n{report_content}"
+            
+            # 添加分隔线
+            st.markdown("---")
+            
+            # 卡片容器
+            st.markdown('<div class="report-card">', unsafe_allow_html=True)
+            st.markdown("### AI赋能DQA-产品设计风险分析报告" if lang == "zh" else "### AI-Enabled DQA Product Design Risk Analysis Report")
+            st.markdown(full_report_display)
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Word 下载
+            if report_content:
+                # 从 session state 获取分析人信息（确保侧边栏填写的值被传递）
+                saved_analyst_name = st.session_state.get("analyst_name", "")
+                saved_analyst_title = st.session_state.get("analyst_title", "")
+                
+                word_bytes = generate_word_report(
+                    product_name, product_desc,
+                    saved_analyst_name, saved_analyst_title,
+                    report_content,
+                    lang=st.session_state.lang
+                )
+                
+                # 根据语言生成不同的文件名
+                if st.session_state.lang == "en":
+                    file_name = f"{product_name}_Risk_Analysis_Report_{datetime.now().strftime('%Y%m%d')}.docx"
+                else:
+                    file_name = f"{product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d')}.docx"
+                
+                st.download_button(
+                    label="📥 下载 Word 报告" if lang == "zh" else "📥 Download Word Report",
+                    data=word_bytes,
+                    file_name=file_name,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
     st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("---")
