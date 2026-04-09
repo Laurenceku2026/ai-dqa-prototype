@@ -15,6 +15,7 @@ from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 
+st.set_page_config(layout="wide")
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
