@@ -18,91 +18,81 @@ from docx.oxml.ns import qn
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# 自定义CSS
+# 自定义CSS —— 【强制全屏，无任何宽度限制】
 st.markdown("""
 <style>
-    /* 中英文按钮红底，防止换行 */
-    .stButton button:has(span:contains("中文")),
-    .stButton button:has(span:contains("English")) {
-        background-color: #ff4b4b !important;
-        color: white !important;
-        font-size: 16px !important;
-        font-weight: bold !important;
-        border-radius: 40px !important;
-        padding: 0.5rem 1rem !important;
-        min-width: 120px !important;
-        border: none !important;
-        white-space: nowrap !important;
-    }
-    /* 主分析按钮 */
-    .main-analyze button {
-        font-size: 36px !important;
-        padding: 20px 60px !important;
-        background-color: #ff4b4b !important;
-        color: white !important;
-        border-radius: 60px !important;
-        border: none !important;
-        box-shadow: 0 8px 16px rgba(0,0,0,0.2);
-        width: auto !important;
-        min-width: 400px !important;
-        transition: all 0.3s ease;
-        cursor: pointer !important;
-    }
-    .main-analyze button:hover {
-        transform: scale(1.02);
-        background-color: #e03a3a !important;
-    }
-    .main-analyze {
-        text-align: center;
-        margin: 30px 0;
-    }
-    /* 齿轮按钮 */
-    .stButton button:has(span:contains("⚙️")) {
-        background-color: transparent !important;
-        color: #31333f !important;
-        border: 1px solid #ccc !important;
-        border-radius: 8px !important;
-        box-shadow: none !important;
-    }
-    /* 侧边栏按钮 */
-    section[data-testid="stSidebar"] .stButton button {
-        background-color: #f0f2f6 !important;
-        color: #31333f !important;
-        font-size: 14px !important;
-        border-radius: 8px !important;
-        box-shadow: none !important;
-    }
-    /* 报告卡片 —— 【这里是唯一修改：让报告铺满宽度】 */
-    .report-card {
-        background-color: #f8f9fa;
-        padding: 1.5rem;
-        border-radius: 12px;
-        margin: 1rem 0;
-        width: 100% !important;
-        max-width: 100% !important;
-        box-sizing: border-box !important;
-    }
-    .report-card table {
-        width: 100% !important;
-        border-collapse: collapse;
-        margin: 1em 0;
-    }
-    .report-card th, .report-card td {
-        border: 1px solid #ddd;
-        padding: 8px;
-        text-align: left;
-    }
-    .report-card th {
-        background-color: #f2f2f2;
-    }
-    /* 右上角按钮列宽稳定 */
-    div[data-testid="column"]:nth-child(3) button,
-    div[data-testid="column"]:nth-child(4) button {
-        min-width: 120px !important;
-    }
-    .stButton button span {
-        font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
-    }
+/* 全局强制全屏 */
+.block-container {
+    max-width: 100% !important;
+    width: 100% !important;
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+}
+/* 中英文按钮红底 */
+.stButton button:has(span:contains("中文")),
+.stButton button:has(span:contains("English")) {
+    background-color: #ff4b4b !important;
+    color: white !important;
+    font-size: 16px !important;
+    font-weight: bold !important;
+    border-radius: 40px !important;
+    padding: 0.5rem 1rem !important;
+    min-width: 120px !important;
+    border: none !important;
+    white-space: nowrap !important;
+}
+/* 主分析按钮 */
+.main-analyze button {
+    font-size: 36px !important;
+    padding: 20px 60px !important;
+    background-color: #ff4b4b !important;
+    color: white !important;
+    border-radius: 60px !important;
+    border: none !important;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+    width: auto !important;
+    min-width: 400px !important;
+    transition: all 0.3s ease;
+    cursor: pointer !important;
+}
+.main-analyze button:hover {
+    transform: scale(1.02);
+    background-color: #e03a3a !important;
+}
+.main-analyze {
+    text-align: center;
+    margin: 30px 0;
+}
+/* 报告卡片 —— 100% 全屏铺满 */
+.report-card {
+    background-color: #f8f9fa;
+    padding: 1.5rem;
+    border-radius: 12px;
+    margin: 1rem 0;
+    width: 100vw !important;
+    max-width: 100vw !important;
+    min-width: 100% !important;
+    position: relative !important;
+    left: 0 !important;
+    right: 0 !important;
+    box-sizing: border-box !important;
+    overflow-x: visible !important;
+}
+.report-card table {
+    width: 100% !important;
+    border-collapse: collapse;
+    margin: 1em 0;
+}
+.report-card th, .report-card td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+}
+.report-card th {
+    background-color: #f2f2f2;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -650,7 +640,7 @@ def web_search(query: str, max_results=3) -> str:
             return "未找到相关结果。"
         output = []
         for r in results:
-            output.append(f"- **{r['title']}**: {r['body'][:300]}... [来源]({r['href']})")
+            output.append(f"- **{r['title']}: {r['body'][:300]}... [来源]({r['href']})")
         return "\n".join(output)
     except Exception as e:
         return f"搜索失败: {str(e)}"
@@ -747,7 +737,6 @@ def markdown_to_docx(md_text: str, doc: Document):
 
 # ================== 生成 Word 报告 ==================
 def generate_word_report(product_name: str, product_desc: str, analyst_name: str, analyst_title: str, report_content: str, lang: str = "zh") -> BytesIO:
-    # 强制使用当前 session 语言
     current_lang = st.session_state.get("lang", "zh")
     doc = Document()
     for section in doc.sections:
@@ -953,7 +942,7 @@ def admin_settings_dialog():
             }
             for cat in ["光学", "机械", "材料", "热学", "电气", "控制"]:
                 db.clear_knowledge_category(cat)
-            for excel_col, cat in column_mapping.items():
+            for excel_col, cat in column_mapping.values():
                 if excel_col in df.columns:
                     items = df[excel_col].dropna().astype(str).tolist()
                     items = [item.strip() for item in items if item.strip()]
@@ -1059,7 +1048,6 @@ with st.sidebar:
     analyst_name_input = st.text_input(t["analyst_name_label"], placeholder=t["analyst_name_ph"], key="analyst_name_input")
     analyst_title_input = st.text_input(t["analyst_title_label"], placeholder=t["analyst_title_ph"], key="analyst_title_input")
     
-    # 存储到 session state
     st.session_state.analyst_name = analyst_name_input
     st.session_state.analyst_title = analyst_title_input
     
@@ -1097,7 +1085,6 @@ with col_center:
         else:
             db = st.session_state.database
             with st.spinner(t["generating"]):
-                # 生成 AI 报告
                 report_content = generate_ai_analysis_content(
                     product_name, product_desc,
                     st.session_state.enable_web_search,
@@ -1105,7 +1092,6 @@ with col_center:
                     lang=st.session_state.lang
                 )
                 
-                # 从 session state 获取分析人信息
                 saved_name = st.session_state.get("analyst_name", "")
                 saved_title = st.session_state.get("analyst_title", "")
                 
@@ -1125,7 +1111,6 @@ with col_center:
                 st.markdown(full_report_display)
                 st.markdown('</div>', unsafe_allow_html=True)
                 
-                # Word 下载
                 if report_content:
                     word_bytes = generate_word_report(
                         product_name, product_desc,
