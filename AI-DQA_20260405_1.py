@@ -15,7 +15,6 @@ from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 
-st.set_page_config(layout="wide")
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
@@ -73,15 +72,18 @@ st.markdown("""
         border-radius: 8px !important;
         box-shadow: none !important;
     }
-    /* 报告卡片 */
+    /* 报告卡片 —— 【这里是唯一修改：让报告铺满宽度】 */
     .report-card {
         background-color: #f8f9fa;
         padding: 1.5rem;
         border-radius: 12px;
         margin: 1rem 0;
+        width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
     }
     .report-card table {
-        width: 100%;
+        width: 100% !important;
         border-collapse: collapse;
         margin: 1em 0;
     }
