@@ -5,8 +5,10 @@ import os
 import sqlite3
 import openai
 import re
+import secrets
+import string
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from duckduckgo_search import DDGS
 from neo4j import GraphDatabase
@@ -18,19 +20,15 @@ from docx.oxml.ns import qn
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# 自定义CSS —— 【强制全屏，无任何宽度限制】
+# 自定义CSS —— 强制全屏，水印等样式
 st.markdown("""
 <style>
-/* 全局强制全屏 */
 .block-container {
     max-width: 100% !important;
     width: 100% !important;
     padding-left: 1rem !important;
     padding-right: 1rem !important;
-    margin-left: 0 !important;
-    margin-right: 0 !important;
 }
-/* 中英文按钮红底 */
 .stButton button:has(span:contains("中文")),
 .stButton button:has(span:contains("English")) {
     background-color: #ff4b4b !important;
@@ -40,50 +38,30 @@ st.markdown("""
     border-radius: 40px !important;
     padding: 0.5rem 1rem !important;
     min-width: 120px !important;
-    border: none !important;
     white-space: nowrap !important;
 }
-/* 主分析按钮 */
 .main-analyze button {
     font-size: 36px !important;
     padding: 20px 60px !important;
     background-color: #ff4b4b !important;
     color: white !important;
     border-radius: 60px !important;
-    border: none !important;
-    box-shadow: 0 8px 16px rgba(0,0,0,0.2);
-    width: auto !important;
     min-width: 400px !important;
-    transition: all 0.3s ease;
-    cursor: pointer !important;
 }
 .main-analyze button:hover {
     transform: scale(1.02);
     background-color: #e03a3a !important;
 }
-.main-analyze {
-    text-align: center;
-    margin: 30px 0;
-}
-/* 报告卡片 —— 100% 全屏铺满 */
 .report-card {
     background-color: #f8f9fa;
     padding: 1.5rem;
     border-radius: 12px;
     margin: 1rem 0;
-    width: 100vw !important;
-    max-width: 100vw !important;
-    min-width: 100% !important;
-    position: relative !important;
-    left: 0 !important;
-    right: 0 !important;
-    box-sizing: border-box !important;
-    overflow-x: visible !important;
+    width: 100%;
 }
 .report-card table {
-    width: 100% !important;
+    width: 100%;
     border-collapse: collapse;
-    margin: 1em 0;
 }
 .report-card th, .report-card td {
     border: 1px solid #ddd;
@@ -93,8 +71,141 @@ st.markdown("""
 .report-card th {
     background-color: #f2f2f2;
 }
+/* 防复制和右键禁用（仅试用模式生效） */
+.disable-copy {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    -webkit-touch-callout: none;
+}
+.disable-copy * {
+    user-select: none;
+    -webkit-user-select: none;
+}
 </style>
 """, unsafe_allow_html=True)
+
+# ================== 授权与试用数据管理 ==================
+USAGE_FILE = "usage_data.json"
+
+def load_usage_data():
+    if os.path.exists(USAGE_FILE):
+        try:
+            with open(USAGE_FILE, "r") as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_usage_data(data):
+    with open(USAGE_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+# 授权类型定义（用于生成器）
+LICENSE_TYPES = {
+    "trial": {"name": "试用版", "max_uses": 3, "max_months": 1, "en_name": "Trial"},
+    "level1": {"name": "一级用户", "max_uses": 100, "max_months": 12, "en_name": "Level 1"},
+    "level2": {"name": "二级用户", "max_uses": 300, "max_months": 24, "en_name": "Level 2"},
+    "level3": {"name": "三级用户", "max_uses": 500, "max_months": 36, "en_name": "Level 3"},
+    "level4": {"name": "四级用户", "max_uses": 1000, "max_months": 60, "en_name": "Level 4"},
+}
+
+def generate_report_key(license_type, custom_uses=None, custom_months=None, custom_key=None):
+    """
+    生成授权码。返回 (new_key, max_uses, expiry_str, type_name)
+    """
+    if license_type == "custom":
+        max_uses = custom_uses
+        max_months = custom_months
+        type_name = "自定义"
+    else:
+        lic_info = LICENSE_TYPES[license_type]
+        max_uses = lic_info["max_uses"]
+        max_months = lic_info["max_months"]
+        type_name = lic_info["name"]
+    
+    expiry = datetime.now() + timedelta(days=max_months*30)
+    expiry_str = expiry.isoformat()
+    
+    if custom_key and custom_key.strip():
+        new_key = custom_key.strip().upper()
+        usage_db = load_usage_data()
+        if new_key in usage_db:
+            return None, 0, None, "授权码已存在，请使用其他值"
+    else:
+        usage_db = load_usage_data()
+        while True:
+            random_str = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
+            new_key = f"{license_type.upper()}_{random_str}"
+            if new_key not in usage_db:
+                break
+    
+    usage_db[new_key] = {
+        "type": license_type,
+        "remaining": max_uses,
+        "expiry": expiry_str,
+        "total_uses": 0,
+        "generated_at": datetime.now().isoformat()
+    }
+    save_usage_data(usage_db)
+    return new_key, max_uses, expiry_str, type_name
+
+def activate_license(report_key):
+    """验证授权码，返回 (valid, remaining, expiry_str, license_type)"""
+    if not report_key:
+        return False, 0, None, None
+    usage_db = load_usage_data()
+    if report_key in usage_db:
+        record = usage_db[report_key]
+        remaining = record["remaining"]
+        expiry_str = record["expiry"]
+        expiry = datetime.fromisoformat(expiry_str)
+        if remaining > 0 and datetime.now() <= expiry:
+            return True, remaining, expiry_str, record.get("type", "unknown")
+    return False, 0, None, None
+
+def consume_usage(report_key):
+    """消耗一次使用次数，返回是否成功"""
+    if st.session_state.get("admin_logged_in", False):
+        return True  # 管理员无限使用
+    if not report_key:
+        # 试用模式，使用 session_state 中的试用次数
+        if st.session_state.trial_uses_left > 0:
+            st.session_state.trial_uses_left -= 1
+            return True
+        else:
+            return False
+    usage_db = load_usage_data()
+    if report_key in usage_db:
+        record = usage_db[report_key]
+        if record["remaining"] > 0 and datetime.now() <= datetime.fromisoformat(record["expiry"]):
+            record["remaining"] -= 1
+            record["total_uses"] = record.get("total_uses", 0) + 1
+            save_usage_data(usage_db)
+            return True
+    return False
+
+def get_remaining_info(report_key):
+    """获取剩余次数和有效期字符串"""
+    if st.session_state.get("admin_logged_in", False):
+        return "无限", "永久"
+    if report_key:
+        valid, remaining, expiry_str, _ = activate_license(report_key)
+        if valid:
+            expiry = datetime.fromisoformat(expiry_str)
+            return str(remaining), expiry.strftime("%Y-%m-%d")
+    # 试用模式
+    return str(st.session_state.trial_uses_left), "试用剩余次数"
+
+def is_premium_user(report_key):
+    """判断是否为付费用户（有有效授权码）"""
+    if st.session_state.get("admin_logged_in", False):
+        return True
+    if report_key:
+        valid, _, _, _ = activate_license(report_key)
+        return valid
+    return False
 
 # ================== 初始化 Session State ==================
 if "lang" not in st.session_state:
@@ -105,19 +216,28 @@ if "enable_web_search" not in st.session_state:
     st.session_state.enable_web_search = True
 if "translation_cache" not in st.session_state:
     st.session_state.translation_cache = {}
-
 if "temp_api_key" not in st.session_state:
     st.session_state.temp_api_key = ""
 if "temp_base_url" not in st.session_state:
     st.session_state.temp_base_url = "https://api.deepseek.com"
 if "temp_model" not in st.session_state:
     st.session_state.temp_model = "deepseek-chat"
+if "analyst_name" not in st.session_state:
+    st.session_state.analyst_name = ""
+if "analyst_title" not in st.session_state:
+    st.session_state.analyst_title = ""
+if "current_report_key" not in st.session_state:
+    st.session_state.current_report_key = ""
+if "trial_uses_left" not in st.session_state:
+    st.session_state.trial_uses_left = 3  # 免费试用次数
+if "show_payment_dialog" not in st.session_state:
+    st.session_state.show_payment_dialog = False
 
 # ================== 管理员凭证 ==================
 ADMIN_USERNAME = "Laurence_ku"
 ADMIN_PASSWORD = "Ku_product$2026"
 
-# ================== 数据库抽象接口 ==================
+# ================== 数据库抽象接口（保持原有） ==================
 class RiskDatabase:
     def get_risks(self, product_type: str) -> List[Dict]:
         raise NotImplementedError
@@ -140,7 +260,7 @@ class RiskDatabase:
     def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
         raise NotImplementedError
 
-# ================== SQLite 实现（双语知识库） ==================
+# ================== SQLite 实现（保持原有） ==================
 class SQLiteDatabase(RiskDatabase):
     def __init__(self):
         self.conn = sqlite3.connect('app_data.db', check_same_thread=False)
@@ -322,7 +442,7 @@ class SQLiteDatabase(RiskDatabase):
         self.conn.commit()
         self.load_caches()
 
-# ================== Neo4j 实现（双语知识库 + 双向检索） ==================
+# ================== Neo4j 实现（保持原有，但可选） ==================
 class Neo4jDatabase(RiskDatabase):
     def __init__(self):
         self.driver = None
@@ -345,46 +465,36 @@ class Neo4jDatabase(RiskDatabase):
             self.driver = None
 
     def _init_constraints(self):
-        if not self.driver:
-            return
+        if not self.driver: return
         with self.driver.session() as session:
             try:
                 session.run("CREATE CONSTRAINT knowledge_id IF NOT EXISTS FOR (k:Knowledge) REQUIRE k.id IS UNIQUE")
-            except:
-                pass
+            except: pass
             try:
                 session.run("CREATE INDEX knowledge_content IF NOT EXISTS FOR (k:Knowledge) ON (k.content)")
                 session.run("CREATE INDEX knowledge_content_en IF NOT EXISTS FOR (k:Knowledge) ON (k.content_en)")
-            except:
-                pass
+            except: pass
 
     def _migrate_existing_knowledge(self):
-        if not self.driver:
-            return
+        if not self.driver: return
         with self.driver.session() as session:
             result = session.run("MATCH (k:Knowledge) WHERE k.content_en IS NULL RETURN k.category AS cat, k.content AS content, id(k) AS id")
-            records = list(result)
-            for rec in records:
-                cat = rec["cat"]
-                zh_text = rec["content"]
-                if re.search(r'[\u4e00-\u9fff]', zh_text):
-                    en_text = translate_text(zh_text, "en")
-                else:
-                    en_text = zh_text
+            for rec in result:
+                cat, zh_text, nid = rec["cat"], rec["content"], rec["id"]
+                en_text = translate_text(zh_text, "en") if re.search(r'[\u4e00-\u9fff]', zh_text) else zh_text
+                if not re.search(r'[\u4e00-\u9fff]', zh_text):
                     zh_text = translate_text(zh_text, "zh")
-                session.run("MATCH (k:Knowledge) WHERE id(k) = $id SET k.content_en = $en, k.content = $zh",
-                            {"id": rec["id"], "en": en_text, "zh": zh_text})
+                session.run("MATCH (k:Knowledge) WHERE id(k)=$id SET k.content_en=$en, k.content=$zh",
+                            {"id": nid, "en": en_text, "zh": zh_text})
 
     def _query(self, query, params=None):
-        if not self.driver:
-            return []
+        if not self.driver: return []
         with self.driver.session() as session:
             result = session.run(query, params or {})
             return [record.data() for record in result]
 
     def get_risks(self, product_type: str) -> List[Dict]:
-        if not self.driver:
-            return []
+        if not self.driver: return []
         cypher = """
             MATCH (p:ProductType {name: $ptype})-[:HAS_RISK]->(r:Risk)
             RETURN r.module AS module, r.failure_mode AS failure_mode, r.cause AS cause,
@@ -414,8 +524,7 @@ class Neo4jDatabase(RiskDatabase):
         return {}
 
     def get_mitigation(self, module: str, failure_mode: str) -> str:
-        if not self.driver:
-            return ""
+        if not self.driver: return ""
         cypher = """
             MATCH (m:Module {name: $module})-[:HAS_FAILURE]->(f:FailureMode {name: $failure})
             OPTIONAL MATCH (f)-[:MITIGATED_BY]->(mit:Mitigation)
@@ -428,8 +537,7 @@ class Neo4jDatabase(RiskDatabase):
         return ""
 
     def get_knowledge_by_category(self, category: str) -> List[str]:
-        if not self.driver:
-            return []
+        if not self.driver: return []
         lang = st.session_state.lang
         if lang == "zh":
             cypher = "MATCH (k:Knowledge {category: $cat}) RETURN k.content AS content"
@@ -439,8 +547,7 @@ class Neo4jDatabase(RiskDatabase):
         return [r["content"] for r in results if r.get("content")]
 
     def add_knowledge(self, category: str, content: str):
-        if not self.driver:
-            return
+        if not self.driver: return
         lang = st.session_state.lang
         if lang == "zh":
             zh_text = content
@@ -450,15 +557,12 @@ class Neo4jDatabase(RiskDatabase):
             zh_text = translate_text(content, "zh")
         import uuid
         node_id = str(uuid.uuid4())
-        cypher = """
-            CREATE (k:Knowledge {id: $id, category: $cat, content: $zh, content_en: $en})
-        """
         with self.driver.session() as session:
-            session.run(cypher, {"id": node_id, "cat": category, "zh": zh_text, "en": en_text})
+            session.run("CREATE (k:Knowledge {id: $id, category: $cat, content: $zh, content_en: $en})",
+                        {"id": node_id, "cat": category, "zh": zh_text, "en": en_text})
 
     def delete_knowledge(self, category: str, content: str):
-        if not self.driver:
-            return
+        if not self.driver: return
         lang = st.session_state.lang
         if lang == "zh":
             cypher = "MATCH (k:Knowledge {category: $cat, content: $cont}) DELETE k"
@@ -468,15 +572,12 @@ class Neo4jDatabase(RiskDatabase):
             session.run(cypher, {"cat": category, "cont": content})
 
     def clear_knowledge_category(self, category: str):
-        if not self.driver:
-            return
-        cypher = "MATCH (k:Knowledge {category: $cat}) DELETE k"
+        if not self.driver: return
         with self.driver.session() as session:
-            session.run(cypher, {"cat": category})
+            session.run("MATCH (k:Knowledge {category: $cat}) DELETE k", {"cat": category})
 
     def get_all_knowledge(self) -> Dict[str, List[str]]:
-        if not self.driver:
-            return {}
+        if not self.driver: return {}
         lang = st.session_state.lang
         if lang == "zh":
             cypher = "MATCH (k:Knowledge) RETURN k.category AS cat, k.content AS cont"
@@ -486,14 +587,11 @@ class Neo4jDatabase(RiskDatabase):
         knowledge = {}
         for r in results:
             cat = r["cat"]
-            if cat not in knowledge:
-                knowledge[cat] = []
-            knowledge[cat].append(r["cont"])
+            knowledge.setdefault(cat, []).append(r["cont"])
         return knowledge
 
     def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
-        if not self.driver or not keywords.strip():
-            return []
+        if not self.driver or not keywords.strip(): return []
         cypher = """
             MATCH (k:Knowledge)
             WHERE k.content CONTAINS $kw OR k.content_en CONTAINS $kw
@@ -586,7 +684,6 @@ class HybridDatabase(RiskDatabase):
     def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
         return self.sqlite.search_knowledge(keywords, limit)
 
-# ================== 数据库工厂 ==================
 def get_database() -> RiskDatabase:
     return HybridDatabase()
 
@@ -648,20 +745,9 @@ def web_search(query: str, max_results=3) -> str:
 # ================== 清理 AI 响应 ==================
 def clean_ai_response(text: str, lang: str = "zh") -> str:
     if lang == "en":
-        patterns = [
-            r'^Okay[,.]?\s*\n',
-            r'^As a senior reliability engineer.*?\n',
-            r'^Based on the above information.*?\n',
-            r'^Here is the risk analysis report.*?\n',
-        ]
+        patterns = [r'^Okay[,.]?\s*\n', r'^As a senior reliability engineer.*?\n', r'^Based on the above information.*?\n', r'^Here is the risk analysis report.*?\n']
     else:
-        patterns = [
-            r'^好的[，,].*?\n',
-            r'^作为一名资深可靠性工程师.*?\n',
-            r'^基于以上提供的信息.*?\n',
-            r'^根据您提供的信息.*?\n',
-            r'^以下是对.*?的风险分析报告.*?\n',
-        ]
+        patterns = [r'^好的[，,].*?\n', r'^作为一名资深可靠性工程师.*?\n', r'^基于以上提供的信息.*?\n', r'^根据您提供的信息.*?\n', r'^以下是对.*?的风险分析报告.*?\n']
     for pat in patterns:
         text = re.sub(pat, '', text, flags=re.IGNORECASE | re.DOTALL)
     lines = text.split('\n')
@@ -735,8 +821,8 @@ def markdown_to_docx(md_text: str, doc: Document):
             doc.add_paragraph()
         i += 1
 
-# ================== 生成 Word 报告 ==================
-def generate_word_report(product_name: str, product_desc: str, analyst_name: str, analyst_title: str, report_content: str, lang: str = "zh") -> BytesIO:
+# ================== 生成 Word 报告（支持水印） ==================
+def generate_word_report(product_name: str, product_desc: str, analyst_name: str, analyst_title: str, report_content: str, lang: str = "zh", add_watermark: bool = False) -> BytesIO:
     current_lang = st.session_state.get("lang", "zh")
     doc = Document()
     for section in doc.sections:
@@ -748,22 +834,12 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
     if current_lang == "en":
         title_text = "AI-Enabled DQA Product Design Risk Analysis Report"
         url_label = "Report online address:"
-        table_labels = {
-            "product_name": "Product Name",
-            "design_desc": "Design Description",
-            "date": "Report Date",
-            "analyst": "Analyst"
-        }
+        table_labels = {"product_name": "Product Name", "design_desc": "Design Description", "date": "Report Date", "analyst": "Analyst"}
         placeholder = "Not filled"
     else:
         title_text = "AI赋能DQA-产品设计风险分析报告"
         url_label = "报告在线地址："
-        table_labels = {
-            "product_name": "产品名称",
-            "design_desc": "设计描述",
-            "date": "报告日期",
-            "analyst": "分析人"
-        }
+        table_labels = {"product_name": "产品名称", "design_desc": "设计描述", "date": "报告日期", "analyst": "分析人"}
         placeholder = "未填写"
 
     title = doc.add_heading(title_text, level=1)
@@ -788,6 +864,20 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
     doc.add_paragraph()
 
     markdown_to_docx(report_content, doc)
+
+    # 添加水印（仅试用模式）
+    if add_watermark:
+        watermark_text = "Confidential - Sample Report - Contact Techlife2027@gmail.com" if current_lang=="en" else "机密 - 样板报告 - 请联系 Techlife2027@gmail.com"
+        # 在页眉中添加水印
+        section = doc.sections[0]
+        header = section.header
+        header_para = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
+        run = header_para.add_run(watermark_text)
+        run.font.size = Pt(8)
+        run.font.color.rgb = RGBColor(150, 150, 150)
+        run.font.italic = True
+        header_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
     doc_bytes = BytesIO()
     doc.save(doc_bytes)
     doc_bytes.seek(0)
@@ -859,7 +949,7 @@ Note: Do not bold module names in the table, and avoid using ** symbols.
     raw = call_deepseek(prompt, max_tokens=4000)
     return clean_ai_response(raw, lang)
 
-# ================== 管理员设置弹窗 ==================
+# ================== 管理员设置弹窗（含 Report Key 生成器） ==================
 @st.dialog("管理员设置", width="large")
 def admin_settings_dialog():
     st.subheader("🔐 管理员验证")
@@ -886,7 +976,7 @@ def admin_settings_dialog():
         "Neo4j 连接": "✅ 已连接" if neo_available else "⚠️ 未连接（仅使用 SQLite）",
         "联网搜索": "启用" if st.session_state.enable_web_search else "禁用",
         "DeepSeek API": "已配置" if (st.session_state.temp_api_key or st.secrets.get("DEEPSEEK_API_KEY")) else "未配置",
-        "双向检索": "✅ 已启用（同时匹配中英文知识库，SQLite + Neo4j 均支持）"
+        "双向检索": "✅ 已启用"
     })
     st.markdown("---")
     st.subheader("📚 知识库管理（双语）")
@@ -926,11 +1016,7 @@ def admin_settings_dialog():
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, sheet_name="知识库", index=False)
-        st.download_button(
-            label="下载 Excel 文件",
-            data=output.getvalue(),
-            file_name=f"knowledge_base_{datetime.now().strftime('%Y%m%d')}.xlsx"
-        )
+        st.download_button(label="下载 Excel 文件", data=output.getvalue(), file_name=f"knowledge_base_{datetime.now().strftime('%Y%m%d')}.xlsx")
     uploaded = st.file_uploader("上传 Excel 文件（覆盖）", type=["xlsx"])
     if uploaded:
         try:
@@ -940,18 +1026,101 @@ def admin_settings_dialog():
                 "热学 / Thermal": "热学", "电气 / Electrical": "电气", "控制 / Control": "控制",
                 "光学": "光学", "机械": "机械", "材料": "材料", "热学": "热学", "电气": "电气", "控制": "控制"
             }
-            for cat in ["光学", "机械", "材料", "热学", "电气", "控制"]:
+            for cat in categories:
                 db.clear_knowledge_category(cat)
-            for excel_col, cat in column_mapping.values():
+            for excel_col, cat in column_mapping.items():
                 if excel_col in df.columns:
                     items = df[excel_col].dropna().astype(str).tolist()
                     items = [item.strip() for item in items if item.strip()]
                     for item in items:
                         db.add_knowledge(cat, item)
-            st.success(f"知识库已更新！共导入 {sum(len(st.session_state.database.sqlite.knowledge_zh[cat]) for cat in column_mapping.values())} 条记录。")
+            st.success(f"知识库已更新！共导入 {sum(len(st.session_state.database.sqlite.knowledge_zh[cat]) for cat in categories)} 条记录。")
             st.rerun()
         except Exception as e:
             st.error(f"导入失败：{e}")
+    st.markdown("---")
+    
+    # ========== Report Key 生成器 ==========
+    st.subheader("🔑 Report Key 生成器")
+    key_type = st.selectbox("选择授权类型", ["试用版", "一级用户", "二级用户", "三级用户", "四级用户", "自定义"])
+    custom_uses = None
+    custom_months = None
+    if key_type == "自定义":
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            custom_uses = st.number_input("使用次数", min_value=1, step=1, value=100)
+        with col_c2:
+            custom_months = st.number_input("有效期（月）", min_value=1, step=1, value=12)
+    custom_key_input = st.text_input("自定义授权码（可选，留空则自动生成）", placeholder="例如：VIP_2026_001")
+    if st.button("生成 Report Key"):
+        if key_type == "试用版":
+            lic_type = "trial"
+        elif key_type == "一级用户":
+            lic_type = "level1"
+        elif key_type == "二级用户":
+            lic_type = "level2"
+        elif key_type == "三级用户":
+            lic_type = "level3"
+        elif key_type == "四级用户":
+            lic_type = "level4"
+        else:
+            lic_type = "custom"
+        result = generate_report_key(lic_type, custom_uses, custom_months, custom_key_input)
+        if result[0] is None:
+            st.error(result[3])
+        else:
+            new_key, max_uses, expiry_str, type_name = result
+            st.success(f"已生成 {type_name} Report Key：")
+            st.code(new_key, language="text")
+            st.write(f"可使用次数：{max_uses} 次，有效期至：{expiry_str[:10]}")
+    
+    st.markdown("---")
+    st.subheader("📋 已生成的所有 Report Key")
+    usage_db = load_usage_data()
+    records = []
+    for key, data in usage_db.items():
+        gen_time = data.get("generated_at")
+        if gen_time:
+            try:
+                gen_dt = datetime.fromisoformat(gen_time)
+            except:
+                gen_dt = datetime.min
+        else:
+            gen_dt = datetime.min
+        records.append({
+            "授权码": key,
+            "类型": data.get("type", "unknown"),
+            "剩余次数": data["remaining"],
+            "总使用次数": data.get("total_uses", 0),
+            "有效期至": data["expiry"][:10] if data["expiry"] else "永久",
+            "生成时间": gen_dt.strftime("%Y-%m-%d %H:%M:%S") if gen_dt != datetime.min else "未知"
+        })
+    records.sort(key=lambda x: x["生成时间"], reverse=True)
+    show_limit = st.selectbox("显示条数", ["最近10条", "最近20条", "最近50条", "全部"], index=0)
+    if show_limit == "最近10条":
+        limit = 10
+    elif show_limit == "最近20条":
+        limit = 20
+    elif show_limit == "最近50条":
+        limit = 50
+    else:
+        limit = len(records)
+    display_records = records[:limit]
+    if display_records:
+        df = pd.DataFrame(display_records)
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.info("暂无授权码记录")
+    if st.button("📥 导出所有授权码为 Excel"):
+        if records:
+            df_all = pd.DataFrame(records)
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df_all.to_excel(writer, sheet_name="授权码列表", index=False)
+            excel_data = output.getvalue()
+            st.download_button(label="点击下载 Excel 文件", data=excel_data, file_name=f"report_keys_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        else:
+            st.warning("暂无数据可导出")
     st.markdown("---")
     st.subheader("⚙️ LLM API 临时配置")
     new_key = st.text_input("DeepSeek API Key", value=st.session_state.temp_api_key, type="password")
@@ -1002,6 +1171,13 @@ TEXTS = {
         "footer": "© 2026 Laurence Ku | AI+DQA 风险分析",
         "db_status": "数据库状态",
         "db_connected": "✅ 混合模式 (SQLite + Neo4j)",
+        "license_info": "授权信息",
+        "remaining_label": "剩余次数",
+        "expiry_label": "有效期至",
+        "report_key_label": "授权码 (Report Key)",
+        "no_license": "未输入授权码，当前为试用模式（剩余次数：{}）",
+        "trial_warning": "⚠️ 您还有 {} 次试用机会，输入授权码可解锁无限使用和下载功能。",
+        "purchase_button": "💰 购买授权码（联系管理员）",
     },
     "en": {
         "title": "🔍 AI+DQA Product Risk Analysis",
@@ -1026,6 +1202,13 @@ TEXTS = {
         "footer": "© 2026 Laurence Ku | AI+DQA Risk Analysis",
         "db_status": "Database Status",
         "db_connected": "✅ Hybrid Mode (SQLite + Neo4j)",
+        "license_info": "License Info",
+        "remaining_label": "Remaining uses",
+        "expiry_label": "Valid until",
+        "report_key_label": "Report Key",
+        "no_license": "No Report Key. Trial mode (remaining credits: {})",
+        "trial_warning": "⚠️ You have {} trial credits left. Enter a license key to unlock unlimited usage.",
+        "purchase_button": "💰 Purchase License (Contact Admin)",
     }
 }
 
@@ -1038,7 +1221,7 @@ if "database" not in st.session_state:
     st.session_state.database = get_database()
     st.session_state.database.load_initial_data()
 
-# ================== 侧边栏 ==================
+# ================== 侧边栏（整合授权码输入） ==================
 with st.sidebar:
     st.markdown(f"## {t['sidebar_title']}")
     for item in t["basis_items"]:
@@ -1047,10 +1230,8 @@ with st.sidebar:
     
     analyst_name_input = st.text_input(t["analyst_name_label"], placeholder=t["analyst_name_ph"], key="analyst_name_input")
     analyst_title_input = st.text_input(t["analyst_title_label"], placeholder=t["analyst_title_ph"], key="analyst_title_input")
-    
     st.session_state.analyst_name = analyst_name_input
     st.session_state.analyst_title = analyst_title_input
-    
     if analyst_name_input:
         st.markdown(f"**{t['analyst_name_label']}: {analyst_name_input}**")
         if analyst_title_input:
@@ -1066,8 +1247,37 @@ with st.sidebar:
     else:
         st.error(t["api_not_configured"])
     st.markdown("---")
+    
     st.markdown(f"**{t['db_status']}**")
     st.info(t["db_connected"])
+    st.markdown("---")
+    
+    # 授权码输入区域（放在最下方）
+    st.markdown(f"### 🔑 {t['report_key_label']}")
+    report_key_input = st.text_input("", value=st.session_state.current_report_key, type="password", key="report_key_input", placeholder="输入授权码后按 Enter")
+    if report_key_input:
+        valid, remaining, expiry_str, _ = activate_license(report_key_input)
+        if valid:
+            st.success(f"授权成功！剩余 {remaining} 次，有效期至 {expiry_str[:10]}" if lang=="zh" else f"Success! {remaining} uses left, valid until {expiry_str[:10]}")
+            st.session_state.current_report_key = report_key_input
+        else:
+            if report_key_input != st.session_state.current_report_key:
+                st.error("授权码无效或已过期" if lang=="zh" else "Invalid or expired license key")
+                st.session_state.current_report_key = ""
+    else:
+        remaining_str, expiry_str = get_remaining_info(st.session_state.current_report_key)
+        st.markdown(f"**{t['license_info']}**")
+        st.write(f"{t['remaining_label']}: {remaining_str}")
+        if expiry_str != "试用剩余次数" and expiry_str != "Trial left":
+            st.write(f"{t['expiry_label']}: {expiry_str}")
+        if not is_premium_user(st.session_state.current_report_key):
+            st.warning(t["trial_warning"].format(st.session_state.trial_uses_left))
+    st.markdown("---")
+    
+    # 购买按钮（预留，可后续对接 Stripe）
+    if st.button(t["purchase_button"], use_container_width=True):
+        st.info("请联系管理员购买授权码：Techlife2027@gmail.com" if lang=="zh" else "Contact admin to purchase: Techlife2027@gmail.com")
+    
     st.markdown("---")
     st.markdown(t["contact_info"])
 
@@ -1083,6 +1293,20 @@ with col_center:
         if not product_name:
             st.error(t["product_name_missing"])
         else:
+            # 检查是否有权限生成报告
+            if is_premium_user(st.session_state.current_report_key):
+                # 付费用户，消耗次数
+                if not consume_usage(st.session_state.current_report_key):
+                    st.error("授权码次数已用完或已过期，请购买新授权码。")
+                    st.stop()
+            else:
+                # 试用用户，检查试用次数
+                if st.session_state.trial_uses_left <= 0:
+                    st.error("试用次数已用完，请联系管理员购买授权码。")
+                    st.stop()
+                # 消耗试用次数
+                consume_usage("")
+            
             db = st.session_state.database
             with st.spinner(t["generating"]):
                 report_content = generate_ai_analysis_content(
@@ -1106,17 +1330,34 @@ with col_center:
                 full_report_display = f"{author_line}\n\n{disclaimer_line}\n\n{report_content}"
                 
                 st.markdown("---")
+                # 根据用户类型决定是否添加防复制CSS和水印
+                is_premium = is_premium_user(st.session_state.current_report_key)
+                if not is_premium:
+                    # 试用模式：添加防复制样式
+                    st.markdown('<div class="disable-copy">', unsafe_allow_html=True)
                 st.markdown('<div class="report-card">', unsafe_allow_html=True)
                 st.markdown("### AI赋能DQA-产品设计风险分析报告" if lang == "zh" else "### AI-Enabled DQA Product Design Risk Analysis Report")
                 st.markdown(full_report_display)
                 st.markdown('</div>', unsafe_allow_html=True)
+                if not is_premium:
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    # 动态水印（试用模式）
+                    watermark_text = "Confidential - Sample Report - Contact Techlife2027@gmail.com" if lang=="en" else "机密 - 样板报告 - 请联系 Techlife2027@gmail.com"
+                    st.markdown(f"""
+                    <div style="position: fixed; bottom: 20px; right: 20px; opacity: 0.3; font-size: 12px; color: #666; pointer-events: none; z-index: 1000;">
+                        {watermark_text}
+                    </div>
+                    """, unsafe_allow_html=True)
                 
+                # 下载 Word 报告
                 if report_content:
+                    # 试用模式添加水印，付费模式无水印
                     word_bytes = generate_word_report(
                         product_name, product_desc,
                         saved_name, saved_title,
                         report_content,
-                        lang=st.session_state.lang
+                        lang=st.session_state.lang,
+                        add_watermark=(not is_premium)
                     )
                     if st.session_state.lang == "en":
                         file_name = f"{product_name}_Risk_Analysis_Report_{datetime.now().strftime('%Y%m%d')}.docx"
