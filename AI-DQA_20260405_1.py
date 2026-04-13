@@ -53,7 +53,7 @@ TRIAL_SECURITY_HTML = """
         bottom: 20px;
         right: 20px;
         opacity: 0.4;
-        font-size: 12px;
+        font-size: 15px;
         color: #888;
         background: rgba(255,255,255,0.6);
         padding: 4px 8px;
@@ -62,8 +62,8 @@ TRIAL_SECURITY_HTML = """
         pointer-events: none;
         z-index: 10000;
         /* 新增宽度控制 */
-        width: 300px;           /* 固定宽度 */
-        max-width: 80%;         /* 或使用百分比 */
+        width: 400px;           /* 固定宽度 */
+        max-width: 90%;         /* 或使用百分比 */
         text-align: right;      /* 文字右对齐 */
     }
 </style>
