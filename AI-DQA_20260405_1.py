@@ -86,12 +86,11 @@ try:
 except:
     stripe.api_key = ""
 
-# 套餐定义（次数，有效期月数）
-# ⚠️ 请将下面的 price_id 替换为你在 Stripe 中实际创建的价格 ID
+# 套餐定义（次数，有效期月数）—— 已填入用户提供的 Price ID
 PLANS = {
-    "single": {"uses": 3, "months": 9999, "price_id": "price_xxxxxxxxxxxxx1", "name_zh": "单次通行", "name_en": "Single Pass", "price_usd": 3},
-    "50": {"uses": 50, "months": 1, "price_id": "price_xxxxxxxxxxxxx2", "name_zh": "50次套餐", "name_en": "50 Credits", "price_usd": 30},
-    "1000": {"uses": 1000, "months": 12, "price_id": "price_xxxxxxxxxxxxx3", "name_zh": "1000次套餐", "name_en": "1000 Credits", "price_usd": 200},
+    "single": {"uses": 3, "months": 9999, "price_id": "price_1TLgfR4PvqyeiHq5zrfC7g2e", "name_zh": "单次通行", "name_en": "Single Pass", "price_usd": 3},
+    "50": {"uses": 50, "months": 1, "price_id": "price_1TLgfP4PvqyeiHq5etIezp0y", "name_zh": "50次套餐", "name_en": "50 Credits", "price_usd": 30},
+    "1000": {"uses": 1000, "months": 12, "price_id": "price_1TLgfQ4PvqyeiHq5FzEr7r71", "name_zh": "1000次套餐", "name_en": "1000 Credits", "price_usd": 200},
 }
 
 # ================== 授权与试用数据管理 ==================
@@ -185,12 +184,12 @@ def consume_usage(report_key):
 
 def get_remaining_info(report_key):
     if st.session_state.get("admin_logged_in", False):
-        return "无限", "永久"
+        return ("无限" if st.session_state.lang=="zh" else "Unlimited"), ("永久" if st.session_state.lang=="zh" else "Permanent")
     if report_key:
         valid, remaining, expiry_str, _ = activate_license(report_key)
         if valid:
             return str(remaining), expiry_str[:10]
-    return str(st.session_state.trial_uses_left), "试用剩余次数"
+    return str(st.session_state.trial_uses_left), ("试用剩余次数" if st.session_state.lang=="zh" else "Trial left")
 
 def is_premium_user(report_key):
     if st.session_state.get("admin_logged_in", False):
@@ -237,7 +236,7 @@ if "payment_new_key" not in st.session_state:
 ADMIN_USERNAME = "Laurence_ku"
 ADMIN_PASSWORD = "Ku_product$2026"
 
-# ================== 数据库抽象接口 ==================
+# ================== 数据库部分（完整实现） ==================
 class RiskDatabase:
     def get_risks(self, product_type: str) -> List[Dict]:
         raise NotImplementedError
@@ -260,7 +259,6 @@ class RiskDatabase:
     def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
         raise NotImplementedError
 
-# ================== SQLite 实现 ==================
 class SQLiteDatabase(RiskDatabase):
     def __init__(self):
         self.conn = sqlite3.connect('app_data.db', check_same_thread=False)
@@ -442,7 +440,6 @@ class SQLiteDatabase(RiskDatabase):
         self.conn.commit()
         self.load_caches()
 
-# ================== Neo4j 实现 ==================
 class Neo4jDatabase(RiskDatabase):
     def __init__(self):
         self.driver = None
@@ -609,10 +606,8 @@ class Neo4jDatabase(RiskDatabase):
         return [item for item in items if item]
 
     def load_initial_data(self):
-        # Neo4j 不需要初始化默认数据，由 SQLite 负责
         pass
 
-# ================== 混合数据库 ==================
 class HybridDatabase(RiskDatabase):
     def __init__(self):
         self.sqlite = SQLiteDatabase()
@@ -666,10 +661,8 @@ class HybridDatabase(RiskDatabase):
         return self.sqlite.get_all_knowledge()
 
     def load_initial_data(self):
-        # 只调用 SQLite 的初始化，Neo4j 会自动从 SQLite 同步
         self.sqlite.load_initial_data()
         if self.neo4j_available:
-            # 将 SQLite 中现有的知识库同步到 Neo4j（如果 Neo4j 为空）
             all_neo = self.neo4j.get_all_knowledge()
             if not any(all_neo.values()):
                 conn = self.sqlite.conn
@@ -690,7 +683,7 @@ class HybridDatabase(RiskDatabase):
 def get_database() -> RiskDatabase:
     return HybridDatabase()
 
-# ================== DeepSeek 客户端 ==================
+# ================== AI 相关函数 ==================
 def get_openai_client():
     api_key = st.session_state.temp_api_key if st.session_state.temp_api_key else st.secrets.get("DEEPSEEK_API_KEY", "")
     base_url = st.session_state.temp_base_url if st.session_state.temp_base_url else st.secrets.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
@@ -731,7 +724,6 @@ def translate_text(text: str, target_lang: str) -> str:
     st.session_state.translation_cache[cache_key] = translated
     return translated
 
-# ================== 联网搜索 ==================
 def web_search(query: str, max_results=3) -> str:
     try:
         with DDGS() as ddgs:
@@ -745,7 +737,6 @@ def web_search(query: str, max_results=3) -> str:
     except Exception as e:
         return f"搜索失败: {str(e)}"
 
-# ================== 清理 AI 响应 ==================
 def clean_ai_response(text: str, lang: str = "zh") -> str:
     if lang == "en":
         patterns = [r'^Okay[,.]?\s*\n', r'^As a senior reliability engineer.*?\n', r'^Based on the above information.*?\n', r'^Here is the risk analysis report.*?\n']
@@ -762,7 +753,6 @@ def clean_ai_response(text: str, lang: str = "zh") -> str:
             text = '\n'.join(lines[1:])
     return text.strip()
 
-# ================== Markdown 转 Word ==================
 def clean_markdown_text(text: str) -> str:
     text = re.sub(r'\*\*', '', text)
     text = re.sub(r'<br\s*/?>', '\n', text)
@@ -824,7 +814,6 @@ def markdown_to_docx(md_text: str, doc: Document):
             doc.add_paragraph()
         i += 1
 
-# ================== 生成 Word 报告（支持水印） ==================
 def generate_word_report(product_name: str, product_desc: str, analyst_name: str, analyst_title: str, report_content: str, lang: str = "zh", add_watermark: bool = False) -> BytesIO:
     current_lang = st.session_state.get("lang", "zh")
     doc = Document()
@@ -884,7 +873,6 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
     doc_bytes.seek(0)
     return doc_bytes
 
-# ================== AI 分析 ==================
 def generate_ai_analysis_content(product_name: str, product_desc: str, enable_web: bool, db: RiskDatabase, lang: str = "zh") -> str:
     search_keywords = f"{product_name} {product_desc}"
     kb_items = db.search_knowledge(search_keywords, limit=10)
@@ -1373,7 +1361,11 @@ with st.sidebar:
         if new_report_key:
             valid, remaining, expiry_str, _ = activate_license(new_report_key)
             if valid:
-                st.success(f"授权成功！剩余 {remaining} 次，有效期至 {expiry_str[:10]}" if lang=="zh" else f"Success! {remaining} uses left, valid until {expiry_str[:10]}")
+                # 成功提示也使用多语言
+                if lang == "zh":
+                    st.success(f"授权成功！剩余 {remaining} 次，有效期至 {expiry_str[:10]}")
+                else:
+                    st.success(f"Success! {remaining} uses left, valid until {expiry_str[:10]}")
                 st.rerun()
             else:
                 st.error("授权码无效或已过期" if lang=="zh" else "Invalid or expired license key")
@@ -1385,7 +1377,7 @@ with st.sidebar:
     remaining_str, expiry_str = get_remaining_info(st.session_state.current_report_key)
     st.markdown(f"**{t['license_info']}**")
     st.write(f"{t['remaining_label']}: {remaining_str}")
-    if expiry_str != "试用剩余次数" and expiry_str != "Trial left":
+    if expiry_str not in ("试用剩余次数", "Trial left"):
         st.write(f"{t['expiry_label']}: {expiry_str}")
     if not is_premium_user(st.session_state.current_report_key):
         st.warning(t["trial_warning"].format(st.session_state.trial_uses_left))
@@ -1411,11 +1403,11 @@ with col_center:
         else:
             if is_premium_user(st.session_state.current_report_key):
                 if not consume_usage(st.session_state.current_report_key):
-                    st.error("授权码次数已用完或已过期，请购买新授权码。")
+                    st.error("授权码次数已用完或已过期，请购买新授权码。" if lang=="zh" else "License key exhausted or expired. Please purchase a new one.")
                     st.stop()
             else:
                 if st.session_state.trial_uses_left <= 0:
-                    st.error("试用次数已用完，请购买授权码。")
+                    st.error("试用次数已用完，请购买授权码。" if lang=="zh" else "Trial credits exhausted. Please purchase a license.")
                     purchase_dialog()
                     st.stop()
                 consume_usage("")
