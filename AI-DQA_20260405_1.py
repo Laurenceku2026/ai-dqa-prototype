@@ -41,10 +41,10 @@ TRIAL_SECURITY_HTML = """
         pointer-events: none;
         z-index: 9999;
         background-image: repeating-linear-gradient(45deg, 
-            rgba(0,0,0,0.03) 0px, rgba(0,0,0,0.03) 2px,
-            transparent 2px, transparent 40px,
-            rgba(0,0,0,0.03) 40px, rgba(0,0,0,0.03) 42px,
-            transparent 42px, transparent 80px);
+            rgba(0,0,0,0.03) 0px, rgba(0,0,0,0.03) 5px,
+            transparent 5px, transparent 60px,
+            rgba(0,0,0,0.03) 60px, rgba(0,0,0,0.03) 65px,
+            transparent 65px, transparent 120px);
         background-size: 80px 80px;
     }
     /* 浮动文字水印 */
@@ -61,6 +61,10 @@ TRIAL_SECURITY_HTML = """
         font-family: monospace;
         pointer-events: none;
         z-index: 10000;
+        /* 新增宽度控制 */
+        width: 300px;           /* 固定宽度 */
+        max-width: 80%;         /* 或使用百分比 */
+        text-align: right;      /* 文字右对齐 */
     }
 </style>
 <script>
