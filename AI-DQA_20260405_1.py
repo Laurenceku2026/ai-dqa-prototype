@@ -20,10 +20,9 @@ from docx.oxml.ns import qn
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# ================== 试用模式的安全防护代码（CSS + JS） ==================
+# ================== 试用模式的安全防护代码（CSS + JS）水印加大版 ==================
 TRIAL_SECURITY_HTML = """
 <style>
-    /* 禁用文本选择 */
     body, .stApp, .report-card, .markdown-text-container {
         user-select: none !important;
         -webkit-user-select: none !important;
@@ -31,7 +30,6 @@ TRIAL_SECURITY_HTML = """
         -ms-user-select: none !important;
         -webkit-touch-callout: none !important;
     }
-    /* 背景水印（斜纹） */
     .trial-watermark-bg {
         position: fixed;
         top: 0;
@@ -41,55 +39,41 @@ TRIAL_SECURITY_HTML = """
         pointer-events: none;
         z-index: 9999;
         background-image: repeating-linear-gradient(45deg, 
-            rgba(0,0,0,0.03) 0px, rgba(0,0,0,0.03) 5px,
-            transparent 5px, transparent 60px,
-            rgba(0,0,0,0.03) 60px, rgba(0,0,0,0.03) 65px,
-            transparent 65px, transparent 120px);
-        background-size: 80px 80px;
+            rgba(0,0,0,0.05) 0px, rgba(0,0,0,0.05) 4px,
+            transparent 4px, transparent 60px,
+            rgba(0,0,0,0.05) 60px, rgba(0,0,0,0.05) 64px,
+            transparent 64px, transparent 120px);
+        background-size: 120px 120px;
     }
-    /* 浮动文字水印 */
     .trial-watermark-text {
         position: fixed;
         bottom: 20px;
         right: 20px;
-        opacity: 0.4;
-        font-size: 15px;
-        color: #888;
-        background: rgba(255,255,255,0.6);
-        padding: 4px 8px;
-        border-radius: 4px;
+        opacity: 0.5;
+        font-size: 14px;
+        color: #666;
+        background: rgba(255,255,255,0.8);
+        padding: 8px 16px;
+        border-radius: 8px;
         font-family: monospace;
         pointer-events: none;
         z-index: 10000;
-        /* 新增宽度控制 */
-        width: 400px;           /* 固定宽度 */
-        max-width: 90%;         /* 或使用百分比 */
-        text-align: right;      /* 文字右对齐 */
+        width: 360px;
+        max-width: 80%;
+        text-align: right;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.1);
     }
 </style>
 <script>
-    // 禁用右键菜单
-    document.addEventListener('contextmenu', function(e) {
-        e.preventDefault();
-        return false;
-    });
-    // 禁用复制、剪切、粘贴、保存等快捷键
+    document.addEventListener('contextmenu', function(e) { e.preventDefault(); return false; });
     document.addEventListener('keydown', function(e) {
         if (e.ctrlKey && (e.key === 'c' || e.key === 'C' || e.key === 'v' || e.key === 'V' || 
                           e.key === 'x' || e.key === 'X' || e.key === 's' || e.key === 'S')) {
-            e.preventDefault();
-            return false;
+            e.preventDefault(); return false;
         }
-        if (e.key === 'F12') {
-            e.preventDefault();
-            return false;
-        }
+        if (e.key === 'F12') { e.preventDefault(); return false; }
     });
-    // 禁用选择（额外保险）
-    document.addEventListener('selectstart', function(e) {
-        e.preventDefault();
-        return false;
-    });
+    document.addEventListener('selectstart', function(e) { e.preventDefault(); return false; });
 </script>
 <div class="trial-watermark-bg"></div>
 <div class="trial-watermark-text">⚠️ 机密报告 · 请联系 Techlife2027@gmail.com 购买授权 ⚠️</div>
@@ -120,7 +104,6 @@ LICENSE_TYPES = {
 }
 
 def generate_report_key(license_type, custom_uses=None, custom_months=None, custom_key=None):
-    """生成授权码，返回 (new_key, max_uses, expiry_str, type_name)"""
     if license_type == "custom":
         max_uses = custom_uses
         max_months = custom_months
@@ -136,7 +119,7 @@ def generate_report_key(license_type, custom_uses=None, custom_months=None, cust
     if custom_key and custom_key.strip():
         new_key = custom_key.strip().upper()
         if new_key in usage_db:
-            return None, 0, None, "授权码已存在，请使用其他值"
+            return None, 0, None, "授权码已存在"
     else:
         while True:
             random_str = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
@@ -154,7 +137,6 @@ def generate_report_key(license_type, custom_uses=None, custom_months=None, cust
     return new_key, max_uses, expiry_str, type_name
 
 def activate_license(report_key):
-    """验证授权码，返回 (valid, remaining, expiry_str, license_type)"""
     if not report_key:
         return False, 0, None, None
     usage_db = load_usage_data()
@@ -168,7 +150,6 @@ def activate_license(report_key):
     return False, 0, None, None
 
 def consume_usage(report_key):
-    """消耗一次使用次数，返回是否成功"""
     if st.session_state.get("admin_logged_in", False):
         return True
     if not report_key:
@@ -188,18 +169,15 @@ def consume_usage(report_key):
     return False
 
 def get_remaining_info(report_key):
-    """获取剩余次数和有效期字符串"""
     if st.session_state.get("admin_logged_in", False):
         return "无限", "永久"
     if report_key:
         valid, remaining, expiry_str, _ = activate_license(report_key)
         if valid:
-            expiry = datetime.fromisoformat(expiry_str)
-            return str(remaining), expiry.strftime("%Y-%m-%d")
+            return str(remaining), expiry_str[:10]
     return str(st.session_state.trial_uses_left), "试用剩余次数"
 
 def is_premium_user(report_key):
-    """判断是否为付费用户（有有效授权码）"""
     if st.session_state.get("admin_logged_in", False):
         return True
     if report_key:
@@ -230,8 +208,12 @@ if "current_report_key" not in st.session_state:
     st.session_state.current_report_key = ""
 if "trial_uses_left" not in st.session_state:
     st.session_state.trial_uses_left = 3
-if "show_payment_dialog" not in st.session_state:
-    st.session_state.show_payment_dialog = False
+if "report_content" not in st.session_state:
+    st.session_state.report_content = None
+if "last_product_name" not in st.session_state:
+    st.session_state.last_product_name = ""
+if "last_product_desc" not in st.session_state:
+    st.session_state.last_product_desc = ""
 
 ADMIN_USERNAME = "Laurence_ku"
 ADMIN_PASSWORD = "Ku_product$2026"
@@ -946,7 +928,7 @@ Note: Do not bold module names in the table, and avoid using ** symbols.
     raw = call_deepseek(prompt, max_tokens=4000)
     return clean_ai_response(raw, lang)
 
-# ================== 管理员设置弹窗（含 Report Key 生成器） ==================
+# ================== 管理员设置弹窗（完整实现） ==================
 @st.dialog("管理员设置", width="large")
 def admin_settings_dialog():
     st.subheader("🔐 管理员验证")
@@ -1175,6 +1157,8 @@ TEXTS = {
         "no_license": "未输入授权码，当前为试用模式（剩余次数：{}）",
         "trial_warning": "⚠️ 您还有 {} 次试用机会，输入授权码可解锁无限使用和下载功能。",
         "purchase_button": "💰 购买授权码（联系管理员）",
+        "download_btn": "📥 下载 Word 报告",
+        "need_license": "⚠️ 请先输入有效授权码后再下载报告。",
     },
     "en": {
         "title": "🔍 AI+DQA Product Risk Analysis",
@@ -1206,6 +1190,8 @@ TEXTS = {
         "no_license": "No Report Key. Trial mode (remaining credits: {})",
         "trial_warning": "⚠️ You have {} trial credits left. Enter a license key to unlock unlimited usage.",
         "purchase_button": "💰 Purchase License (Contact Admin)",
+        "download_btn": "📥 Download Word Report",
+        "need_license": "⚠️ Please enter a valid license key before downloading.",
     }
 }
 
@@ -1249,26 +1235,30 @@ with st.sidebar:
     st.info(t["db_connected"])
     st.markdown("---")
     
-    # 授权码输入区域（放在最下方）
+    # 授权码输入区域
     st.markdown(f"### 🔑 {t['report_key_label']}")
-    report_key_input = st.text_input("", value=st.session_state.current_report_key, type="password", key="report_key_input", placeholder="输入授权码后按 Enter")
-    if report_key_input:
-        valid, remaining, expiry_str, _ = activate_license(report_key_input)
-        if valid:
-            st.success(f"授权成功！剩余 {remaining} 次，有效期至 {expiry_str[:10]}" if lang=="zh" else f"Success! {remaining} uses left, valid until {expiry_str[:10]}")
-            st.session_state.current_report_key = report_key_input
-        else:
-            if report_key_input != st.session_state.current_report_key:
+    new_report_key = st.text_input("", value=st.session_state.current_report_key, type="password", key="report_key_input", placeholder="输入授权码后按 Enter")
+    if new_report_key != st.session_state.current_report_key:
+        st.session_state.current_report_key = new_report_key
+        if new_report_key:
+            valid, remaining, expiry_str, _ = activate_license(new_report_key)
+            if valid:
+                st.success(f"授权成功！剩余 {remaining} 次，有效期至 {expiry_str[:10]}" if lang=="zh" else f"Success! {remaining} uses left, valid until {expiry_str[:10]}")
+                st.rerun()
+            else:
                 st.error("授权码无效或已过期" if lang=="zh" else "Invalid or expired license key")
                 st.session_state.current_report_key = ""
-    else:
-        remaining_str, expiry_str = get_remaining_info(st.session_state.current_report_key)
-        st.markdown(f"**{t['license_info']}**")
-        st.write(f"{t['remaining_label']}: {remaining_str}")
-        if expiry_str != "试用剩余次数" and expiry_str != "Trial left":
-            st.write(f"{t['expiry_label']}: {expiry_str}")
-        if not is_premium_user(st.session_state.current_report_key):
-            st.warning(t["trial_warning"].format(st.session_state.trial_uses_left))
+                st.rerun()
+        else:
+            st.rerun()
+    
+    remaining_str, expiry_str = get_remaining_info(st.session_state.current_report_key)
+    st.markdown(f"**{t['license_info']}**")
+    st.write(f"{t['remaining_label']}: {remaining_str}")
+    if expiry_str != "试用剩余次数" and expiry_str != "Trial left":
+        st.write(f"{t['expiry_label']}: {expiry_str}")
+    if not is_premium_user(st.session_state.current_report_key):
+        st.warning(t["trial_warning"].format(st.session_state.trial_uses_left))
     st.markdown("---")
     
     if st.button(t["purchase_button"], use_container_width=True):
@@ -1278,8 +1268,8 @@ with st.sidebar:
 
 # ================== 主界面 ==================
 st.markdown(f"### {t['input_title']}")
-product_name = st.text_input(t["product_name"], placeholder=t["product_name_ph"])
-product_desc = st.text_area(t["product_desc"], placeholder=t["product_desc_ph"], height=100)
+product_name = st.text_input(t["product_name"], placeholder=t["product_name_ph"], key="product_name_input")
+product_desc = st.text_area(t["product_desc"], placeholder=t["product_desc_ph"], height=100, key="product_desc_input")
 
 col_center = st.columns([1, 2, 1])[1]
 with col_center:
@@ -1288,7 +1278,6 @@ with col_center:
         if not product_name:
             st.error(t["product_name_missing"])
         else:
-            # 权限检查与次数消耗
             if is_premium_user(st.session_state.current_report_key):
                 if not consume_usage(st.session_state.current_report_key):
                     st.error("授权码次数已用完或已过期，请购买新授权码。")
@@ -1299,7 +1288,6 @@ with col_center:
                     st.stop()
                 consume_usage("")
             
-            # 生成报告
             db = st.session_state.database
             with st.spinner(t["generating"]):
                 report_content = generate_ai_analysis_content(
@@ -1308,43 +1296,60 @@ with col_center:
                     db,
                     lang=st.session_state.lang
                 )
-                
-                saved_name = st.session_state.get("analyst_name", "")
-                saved_title = st.session_state.get("analyst_title", "")
-                if saved_name and saved_name.strip():
-                    author_line = f"分析人：{saved_name.strip()}" + (f" ({saved_title.strip()})" if saved_title.strip() else "") if lang=="zh" else f"Analyst: {saved_name.strip()}" + (f" ({saved_title.strip()})" if saved_title.strip() else "")
-                else:
-                    author_line = "AI生成的风险分析报告" if lang=="zh" else "AI-generated risk analysis report"
-                disclaimer_line = "此报告是基于以上提供的有限信息，结合行业数据库和联网搜索结果生成的初步分析，仅供参考。" if lang=="zh" else "This report is a preliminary analysis based on the limited information provided, for reference only."
-                full_report_display = f"{author_line}\n\n{disclaimer_line}\n\n{report_content}"
-                
-                st.markdown("---")
-                is_premium = is_premium_user(st.session_state.current_report_key)
-                # 试用模式：注入防复制和水印
-                if not is_premium:
-                    st.markdown(TRIAL_SECURITY_HTML, unsafe_allow_html=True)
-                st.markdown('<div class="report-card">', unsafe_allow_html=True)
-                st.markdown("### AI赋能DQA-产品设计风险分析报告" if lang=="zh" else "### AI-Enabled DQA Product Design Risk Analysis Report")
-                st.markdown(full_report_display)
-                st.markdown('</div>', unsafe_allow_html=True)
-                
-                # 下载 Word 报告（试用模式加水印）
-                if report_content:
-                    word_bytes = generate_word_report(
-                        product_name, product_desc,
-                        saved_name, saved_title,
-                        report_content,
-                        lang=st.session_state.lang,
-                        add_watermark=(not is_premium)
-                    )
-                    file_name = f"{product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d')}.docx" if lang=="zh" else f"{product_name}_Risk_Analysis_Report_{datetime.now().strftime('%Y%m%d')}.docx"
-                    st.download_button(
-                        label="📥 下载 Word 报告" if lang=="zh" else "📥 Download Word Report",
-                        data=word_bytes,
-                        file_name=file_name,
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    )
+                st.session_state.report_content = report_content
+                st.session_state.last_product_name = product_name
+                st.session_state.last_product_desc = product_desc
+                st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
+
+# ================== 显示已生成的报告 ==================
+if st.session_state.report_content:
+    saved_name = st.session_state.get("analyst_name", "")
+    saved_title = st.session_state.get("analyst_title", "")
+    if saved_name and saved_name.strip():
+        author_line = f"分析人：{saved_name.strip()}" + (f" ({saved_title.strip()})" if saved_title.strip() else "") if lang=="zh" else f"Analyst: {saved_name.strip()}" + (f" ({saved_title.strip()})" if saved_title.strip() else "")
+    else:
+        author_line = "AI生成的风险分析报告" if lang=="zh" else "AI-generated risk analysis report"
+    disclaimer_line = "此报告是基于以上提供的有限信息，结合行业数据库和联网搜索结果生成的初步分析，仅供参考。" if lang=="zh" else "This report is a preliminary analysis based on the limited information provided, for reference only."
+    full_report_display = f"{author_line}\n\n{disclaimer_line}\n\n{st.session_state.report_content}"
+    
+    st.markdown("---")
+    is_premium = is_premium_user(st.session_state.current_report_key)
+    if not is_premium:
+        st.markdown(TRIAL_SECURITY_HTML, unsafe_allow_html=True)
+    st.markdown('<div class="report-card">', unsafe_allow_html=True)
+    st.markdown("### AI赋能DQA-产品设计风险分析报告" if lang=="zh" else "### AI-Enabled DQA Product Design Risk Analysis Report")
+    st.markdown(full_report_display)
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # 下载按钮：未授权时提示
+    col_download = st.columns([1,2,1])[1]
+    with col_download:
+        if st.button(t["download_btn"], use_container_width=True):
+            if not is_premium:
+                st.toast(t["need_license"], icon="⚠️")
+            else:
+                word_bytes = generate_word_report(
+                    st.session_state.last_product_name,
+                    st.session_state.last_product_desc,
+                    saved_name, saved_title,
+                    st.session_state.report_content,
+                    lang=st.session_state.lang,
+                    add_watermark=False
+                )
+                file_name = f"{st.session_state.last_product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d')}.docx" if lang=="zh" else f"{st.session_state.last_product_name}_Risk_Analysis_Report_{datetime.now().strftime('%Y%m%d')}.docx"
+                st.download_button(
+                    label="📥 确认下载",
+                    data=word_bytes,
+                    file_name=file_name,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key="real_download"
+                )
+    if st.button("← 返回重新填写"):
+        st.session_state.report_content = None
+        st.session_state.last_product_name = ""
+        st.session_state.last_product_desc = ""
+        st.rerun()
 
 st.markdown("---")
 st.caption(t["footer"])
