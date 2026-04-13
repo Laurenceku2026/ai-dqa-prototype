@@ -20,71 +20,76 @@ from docx.oxml.ns import qn
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# 自定义CSS —— 强制全屏，水印等样式
-st.markdown("""
+# ================== 试用模式的安全防护代码（CSS + JS） ==================
+TRIAL_SECURITY_HTML = """
 <style>
-.block-container {
-    max-width: 100% !important;
-    width: 100% !important;
-    padding-left: 1rem !important;
-    padding-right: 1rem !important;
-}
-.stButton button:has(span:contains("中文")),
-.stButton button:has(span:contains("English")) {
-    background-color: #ff4b4b !important;
-    color: white !important;
-    font-size: 16px !important;
-    font-weight: bold !important;
-    border-radius: 40px !important;
-    padding: 0.5rem 1rem !important;
-    min-width: 120px !important;
-    white-space: nowrap !important;
-}
-.main-analyze button {
-    font-size: 36px !important;
-    padding: 20px 60px !important;
-    background-color: #ff4b4b !important;
-    color: white !important;
-    border-radius: 60px !important;
-    min-width: 400px !important;
-}
-.main-analyze button:hover {
-    transform: scale(1.02);
-    background-color: #e03a3a !important;
-}
-.report-card {
-    background-color: #f8f9fa;
-    padding: 1.5rem;
-    border-radius: 12px;
-    margin: 1rem 0;
-    width: 100%;
-}
-.report-card table {
-    width: 100%;
-    border-collapse: collapse;
-}
-.report-card th, .report-card td {
-    border: 1px solid #ddd;
-    padding: 8px;
-    text-align: left;
-}
-.report-card th {
-    background-color: #f2f2f2;
-}
-/* 防复制和右键禁用（仅试用模式生效） */
-.disable-copy {
-    user-select: none;
-    -webkit-user-select: none;
-    -moz-user-select: none;
-    -ms-user-select: none;
-    -webkit-touch-callout: none;
-}
-.disable-copy * {
-    user-select: none;
-    -webkit-user-select: none;
-}
+    /* 禁用文本选择 */
+    body, .stApp, .report-card, .markdown-text-container {
+        user-select: none !important;
+        -webkit-user-select: none !important;
+        -moz-user-select: none !important;
+        -ms-user-select: none !important;
+        -webkit-touch-callout: none !important;
+    }
+    /* 背景水印（斜纹） */
+    .trial-watermark-bg {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 9999;
+        background-image: repeating-linear-gradient(45deg, 
+            rgba(0,0,0,0.03) 0px, rgba(0,0,0,0.03) 2px,
+            transparent 2px, transparent 40px,
+            rgba(0,0,0,0.03) 40px, rgba(0,0,0,0.03) 42px,
+            transparent 42px, transparent 80px);
+        background-size: 80px 80px;
+    }
+    /* 浮动文字水印 */
+    .trial-watermark-text {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        opacity: 0.4;
+        font-size: 12px;
+        color: #888;
+        background: rgba(255,255,255,0.6);
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-family: monospace;
+        pointer-events: none;
+        z-index: 10000;
+    }
 </style>
-""", unsafe_allow_html=True)
+<script>
+    // 禁用右键菜单
+    document.addEventListener('contextmenu', function(e) {
+        e.preventDefault();
+        return false;
+    });
+    // 禁用复制、剪切、粘贴、保存等快捷键
+    document.addEventListener('keydown', function(e) {
+        if (e.ctrlKey && (e.key === 'c' || e.key === 'C' || e.key === 'v' || e.key === 'V' || 
+                          e.key === 'x' || e.key === 'X' || e.key === 's' || e.key === 'S')) {
+            e.preventDefault();
+            return false;
+        }
+        if (e.key === 'F12') {
+            e.preventDefault();
+            return false;
+        }
+    });
+    // 禁用选择（额外保险）
+    document.addEventListener('selectstart', function(e) {
+        e.preventDefault();
+        return false;
+    });
+</script>
+<div class="trial-watermark-bg"></div>
+<div class="trial-watermark-text">⚠️ 机密报告 · 请联系 Techlife2027@gmail.com 购买授权 ⚠️</div>
+"""
 
 # ================== 授权与试用数据管理 ==================
 USAGE_FILE = "usage_data.json"
@@ -102,7 +107,6 @@ def save_usage_data(data):
     with open(USAGE_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-# 授权类型定义（用于生成器）
 LICENSE_TYPES = {
     "trial": {"name": "试用版", "max_uses": 3, "max_months": 1, "en_name": "Trial"},
     "level1": {"name": "一级用户", "max_uses": 100, "max_months": 12, "en_name": "Level 1"},
@@ -112,9 +116,7 @@ LICENSE_TYPES = {
 }
 
 def generate_report_key(license_type, custom_uses=None, custom_months=None, custom_key=None):
-    """
-    生成授权码。返回 (new_key, max_uses, expiry_str, type_name)
-    """
+    """生成授权码，返回 (new_key, max_uses, expiry_str, type_name)"""
     if license_type == "custom":
         max_uses = custom_uses
         max_months = custom_months
@@ -124,23 +126,19 @@ def generate_report_key(license_type, custom_uses=None, custom_months=None, cust
         max_uses = lic_info["max_uses"]
         max_months = lic_info["max_months"]
         type_name = lic_info["name"]
-    
     expiry = datetime.now() + timedelta(days=max_months*30)
     expiry_str = expiry.isoformat()
-    
+    usage_db = load_usage_data()
     if custom_key and custom_key.strip():
         new_key = custom_key.strip().upper()
-        usage_db = load_usage_data()
         if new_key in usage_db:
             return None, 0, None, "授权码已存在，请使用其他值"
     else:
-        usage_db = load_usage_data()
         while True:
             random_str = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
             new_key = f"{license_type.upper()}_{random_str}"
             if new_key not in usage_db:
                 break
-    
     usage_db[new_key] = {
         "type": license_type,
         "remaining": max_uses,
@@ -168,9 +166,8 @@ def activate_license(report_key):
 def consume_usage(report_key):
     """消耗一次使用次数，返回是否成功"""
     if st.session_state.get("admin_logged_in", False):
-        return True  # 管理员无限使用
+        return True
     if not report_key:
-        # 试用模式，使用 session_state 中的试用次数
         if st.session_state.trial_uses_left > 0:
             st.session_state.trial_uses_left -= 1
             return True
@@ -195,7 +192,6 @@ def get_remaining_info(report_key):
         if valid:
             expiry = datetime.fromisoformat(expiry_str)
             return str(remaining), expiry.strftime("%Y-%m-%d")
-    # 试用模式
     return str(st.session_state.trial_uses_left), "试用剩余次数"
 
 def is_premium_user(report_key):
@@ -229,15 +225,14 @@ if "analyst_title" not in st.session_state:
 if "current_report_key" not in st.session_state:
     st.session_state.current_report_key = ""
 if "trial_uses_left" not in st.session_state:
-    st.session_state.trial_uses_left = 3  # 免费试用次数
+    st.session_state.trial_uses_left = 3
 if "show_payment_dialog" not in st.session_state:
     st.session_state.show_payment_dialog = False
 
-# ================== 管理员凭证 ==================
 ADMIN_USERNAME = "Laurence_ku"
 ADMIN_PASSWORD = "Ku_product$2026"
 
-# ================== 数据库抽象接口（保持原有） ==================
+# ================== 数据库抽象接口 ==================
 class RiskDatabase:
     def get_risks(self, product_type: str) -> List[Dict]:
         raise NotImplementedError
@@ -260,7 +255,7 @@ class RiskDatabase:
     def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
         raise NotImplementedError
 
-# ================== SQLite 实现（保持原有） ==================
+# ================== SQLite 实现 ==================
 class SQLiteDatabase(RiskDatabase):
     def __init__(self):
         self.conn = sqlite3.connect('app_data.db', check_same_thread=False)
@@ -442,7 +437,7 @@ class SQLiteDatabase(RiskDatabase):
         self.conn.commit()
         self.load_caches()
 
-# ================== Neo4j 实现（保持原有，但可选） ==================
+# ================== Neo4j 实现 ==================
 class Neo4jDatabase(RiskDatabase):
     def __init__(self):
         self.driver = None
@@ -865,10 +860,8 @@ def generate_word_report(product_name: str, product_desc: str, analyst_name: str
 
     markdown_to_docx(report_content, doc)
 
-    # 添加水印（仅试用模式）
     if add_watermark:
         watermark_text = "Confidential - Sample Report - Contact Techlife2027@gmail.com" if current_lang=="en" else "机密 - 样板报告 - 请联系 Techlife2027@gmail.com"
-        # 在页眉中添加水印
         section = doc.sections[0]
         header = section.header
         header_para = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
@@ -1274,10 +1267,8 @@ with st.sidebar:
             st.warning(t["trial_warning"].format(st.session_state.trial_uses_left))
     st.markdown("---")
     
-    # 购买按钮（预留，可后续对接 Stripe）
     if st.button(t["purchase_button"], use_container_width=True):
         st.info("请联系管理员购买授权码：Techlife2027@gmail.com" if lang=="zh" else "Contact admin to purchase: Techlife2027@gmail.com")
-    
     st.markdown("---")
     st.markdown(t["contact_info"])
 
@@ -1293,20 +1284,18 @@ with col_center:
         if not product_name:
             st.error(t["product_name_missing"])
         else:
-            # 检查是否有权限生成报告
+            # 权限检查与次数消耗
             if is_premium_user(st.session_state.current_report_key):
-                # 付费用户，消耗次数
                 if not consume_usage(st.session_state.current_report_key):
                     st.error("授权码次数已用完或已过期，请购买新授权码。")
                     st.stop()
             else:
-                # 试用用户，检查试用次数
                 if st.session_state.trial_uses_left <= 0:
                     st.error("试用次数已用完，请联系管理员购买授权码。")
                     st.stop()
-                # 消耗试用次数
                 consume_usage("")
             
+            # 生成报告
             db = st.session_state.database
             with st.spinner(t["generating"]):
                 report_content = generate_ai_analysis_content(
@@ -1318,40 +1307,25 @@ with col_center:
                 
                 saved_name = st.session_state.get("analyst_name", "")
                 saved_title = st.session_state.get("analyst_title", "")
-                
                 if saved_name and saved_name.strip():
-                    if saved_title and saved_title.strip():
-                        author_line = f"分析人：{saved_name.strip()} ({saved_title.strip()})" if lang == "zh" else f"Analyst: {saved_name.strip()} ({saved_title.strip()})"
-                    else:
-                        author_line = f"分析人：{saved_name.strip()}" if lang == "zh" else f"Analyst: {saved_name.strip()}"
+                    author_line = f"分析人：{saved_name.strip()}" + (f" ({saved_title.strip()})" if saved_title.strip() else "") if lang=="zh" else f"Analyst: {saved_name.strip()}" + (f" ({saved_title.strip()})" if saved_title.strip() else "")
                 else:
-                    author_line = "AI生成的风险分析报告" if lang == "zh" else "AI-generated risk analysis report"
-                disclaimer_line = "此报告是基于以上提供的有限信息，结合行业数据库和联网搜索结果生成的初步分析，仅供参考。" if lang == "zh" else "This report is a preliminary analysis based on the limited information provided, combined with industry databases and web search results, for reference only."
+                    author_line = "AI生成的风险分析报告" if lang=="zh" else "AI-generated risk analysis report"
+                disclaimer_line = "此报告是基于以上提供的有限信息，结合行业数据库和联网搜索结果生成的初步分析，仅供参考。" if lang=="zh" else "This report is a preliminary analysis based on the limited information provided, for reference only."
                 full_report_display = f"{author_line}\n\n{disclaimer_line}\n\n{report_content}"
                 
                 st.markdown("---")
-                # 根据用户类型决定是否添加防复制CSS和水印
                 is_premium = is_premium_user(st.session_state.current_report_key)
+                # 试用模式：注入防复制和水印
                 if not is_premium:
-                    # 试用模式：添加防复制样式
-                    st.markdown('<div class="disable-copy">', unsafe_allow_html=True)
+                    st.markdown(TRIAL_SECURITY_HTML, unsafe_allow_html=True)
                 st.markdown('<div class="report-card">', unsafe_allow_html=True)
-                st.markdown("### AI赋能DQA-产品设计风险分析报告" if lang == "zh" else "### AI-Enabled DQA Product Design Risk Analysis Report")
+                st.markdown("### AI赋能DQA-产品设计风险分析报告" if lang=="zh" else "### AI-Enabled DQA Product Design Risk Analysis Report")
                 st.markdown(full_report_display)
                 st.markdown('</div>', unsafe_allow_html=True)
-                if not is_premium:
-                    st.markdown('</div>', unsafe_allow_html=True)
-                    # 动态水印（试用模式）
-                    watermark_text = "Confidential - Sample Report - Contact Techlife2027@gmail.com" if lang=="en" else "机密 - 样板报告 - 请联系 Techlife2027@gmail.com"
-                    st.markdown(f"""
-                    <div style="position: fixed; bottom: 20px; right: 20px; opacity: 0.3; font-size: 12px; color: #666; pointer-events: none; z-index: 1000;">
-                        {watermark_text}
-                    </div>
-                    """, unsafe_allow_html=True)
                 
-                # 下载 Word 报告
+                # 下载 Word 报告（试用模式加水印）
                 if report_content:
-                    # 试用模式添加水印，付费模式无水印
                     word_bytes = generate_word_report(
                         product_name, product_desc,
                         saved_name, saved_title,
@@ -1359,12 +1333,9 @@ with col_center:
                         lang=st.session_state.lang,
                         add_watermark=(not is_premium)
                     )
-                    if st.session_state.lang == "en":
-                        file_name = f"{product_name}_Risk_Analysis_Report_{datetime.now().strftime('%Y%m%d')}.docx"
-                    else:
-                        file_name = f"{product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d')}.docx"
+                    file_name = f"{product_name}_风险分析报告_{datetime.now().strftime('%Y%m%d')}.docx" if lang=="zh" else f"{product_name}_Risk_Analysis_Report_{datetime.now().strftime('%Y%m%d')}.docx"
                     st.download_button(
-                        label="📥 下载 Word 报告" if lang == "zh" else "📥 Download Word Report",
+                        label="📥 下载 Word 报告" if lang=="zh" else "📥 Download Word Report",
                         data=word_bytes,
                         file_name=file_name,
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
