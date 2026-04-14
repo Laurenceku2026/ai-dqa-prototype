@@ -133,9 +133,14 @@ TRIAL_SECURITY_HTML = """
 """
 
 # ================== 支付链接配置（直接跳转，无需 Stripe API） ==================
+# 注意：请务必在 Stripe 后台将每个 Payment Link 的“支付后行为”设置为“重定向到您的网站”，
+# 并填写以下 URL（替换为您的实际 APP 地址）：
+# 单次通行：https://ai-app-design-dfmea.streamlit.app/?payment_success=1&plan=single
+# 50次套餐：https://ai-app-design-dfmea.streamlit.app/?payment_success=1&plan=50
+# 1000次套餐：https://ai-app-design-dfmea.streamlit.app/?payment_success=1&plan=1000
 PAYMENT_LINKS = {
     "single": {
-        "url": "https://buy.stripe.com/test_dRm28kgzD48EeGxcsk0RG00",
+        "url": "https://buy.stripe.com/dRm28kgzD48EeGxcsk0RG00",  # 请替换为您的实际 Payment Link（已配置重定向）
         "name_zh": "单次通行",
         "name_en": "Single Pass",
         "price_usd": 3,
@@ -143,7 +148,7 @@ PAYMENT_LINKS = {
         "months": 9999
     },
     "50": {
-        "url": "https://buy.stripe.com/test_7sY28kfvz6gM55Xcsk0RG01",
+        "url": "https://buy.stripe.com/7sY28kfvz6gM55Xcsk0RG01",  # 请替换为您的实际 Payment Link（已配置重定向）
         "name_zh": "50次套餐",
         "name_en": "50 Credits",
         "price_usd": 30,
@@ -151,7 +156,7 @@ PAYMENT_LINKS = {
         "months": 1
     },
     "1000": {
-        "url": "https://buy.stripe.com/test_fZu00cabfdJeaqhcsk0RG02",
+        "url": "https://buy.stripe.com/fZu00cabfdJeaqhcsk0RG02",  # 请替换为您的实际 Payment Link（已配置重定向）
         "name_zh": "1000次套餐",
         "name_en": "1000 Credits",
         "price_usd": 200,
@@ -1196,6 +1201,46 @@ def admin_settings_dialog():
         st.session_state.temp_model = new_model
         st.rerun()
 
+# ================== 支付回调处理（从 URL 参数自动激活授权码） ==================
+def handle_payment_callback():
+    """检查 URL 参数，如果存在 payment_success 和 plan，则自动生成对应授权码并激活"""
+    params = st.query_params
+    if "payment_success" in params and "plan" in params:
+        plan_key = params["plan"]
+        if plan_key in PAYMENT_LINKS:
+            uses = PAYMENT_LINKS[plan_key]["uses"]
+            months = PAYMENT_LINKS[plan_key]["months"]
+            new_key, max_uses, expiry_str, _ = generate_report_key("custom", custom_uses=uses, custom_months=months)
+            if new_key:
+                st.session_state.current_report_key = new_key
+                st.session_state.payment_new_key = new_key
+                st.session_state.show_payment_dialog = True
+                # 清除 URL 参数，避免重复触发
+                st.query_params.clear()
+                st.rerun()
+            else:
+                st.error("生成授权码失败，请联系管理员。" if st.session_state.lang=="zh" else "Failed to generate license key. Contact admin.")
+                st.query_params.clear()
+        else:
+            st.error("无效的套餐类型。" if st.session_state.lang=="zh" else "Invalid plan type.")
+            st.query_params.clear()
+
+# ================== 支付成功弹窗 ==================
+def show_payment_success_dialog():
+    if st.session_state.get("show_payment_dialog", False):
+        @st.dialog("✅ 支付成功" if st.session_state.lang=="zh" else "✅ Payment Successful")
+        def payment_success_dialog():
+            lang = st.session_state.lang
+            st.markdown("### 您的授权码已生成" if lang=="zh" else "### Your license key has been generated")
+            st.code(st.session_state.payment_new_key, language="text")
+            st.caption("请妥善保管此授权码，下次使用时可手动复制并粘贴到左侧输入框。" if lang=="zh" else "Please save this license key. You can copy and paste it into the left sidebar next time.")
+            st.info("🔑 请复制上方授权码，然后关闭本窗口，回到您原先生成报告的那个窗口，将授权码粘贴到左侧边栏输入框中即可解锁下载。" if lang=="zh" else "🔑 Please copy the license key above, close this window, return to your original report window, and paste the key into the left sidebar to unlock download.")
+            if st.button("确定" if lang=="zh" else "OK"):
+                st.session_state.show_payment_dialog = False
+                st.session_state.payment_new_key = ""
+                st.rerun()
+        payment_success_dialog()
+
 # ================== 购买对话框（使用 Payment Link，直接跳转） ==================
 @st.dialog("购买+解锁" if st.session_state.lang=="zh" else "Purchase + Unlock", width="large")
 def purchase_dialog():
@@ -1223,7 +1268,6 @@ def purchase_dialog():
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        # 直接使用支付链接，新窗口打开
         url = PAYMENT_LINKS["single"]["url"]
         name = PAYMENT_LINKS["single"]["name_zh"] if lang=="zh" else PAYMENT_LINKS["single"]["name_en"]
         price = PAYMENT_LINKS["single"]["price_usd"]
@@ -1340,6 +1384,10 @@ st.title(t["title"])
 if "database" not in st.session_state:
     st.session_state.database = get_database()
     st.session_state.database.load_initial_data()
+
+# 处理支付回调（自动激活授权码）
+handle_payment_callback()
+show_payment_success_dialog()
 
 # ================== 侧边栏 ==================
 with st.sidebar:
@@ -1466,12 +1514,12 @@ if st.session_state.report_content:
     st.markdown(full_report_display)
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # 下载按钮
+    # 下载按钮：未授权时直接弹出购买对话框
     col_download = st.columns([1,2,1])[1]
     with col_download:
         if st.button(t["download_btn"], use_container_width=True):
             if not is_premium:
-                st.warning(t["need_license"])
+                purchase_dialog()
             else:
                 word_bytes = generate_word_report(
                     st.session_state.last_product_name,
