@@ -1265,7 +1265,7 @@ with col_gear:
 # ================== 多语言文本 ==================
 TEXTS = {
     "zh": {
-        "title": "🔍 AI+DQA 产品风险分析系统",
+        "title": "🔍 AI+DQA 产品设计风险分析系统",
         "sidebar_title": "关于系统",
         "basis_items": ["25+年研发管理经验", "AI大模型数据分析", "知识图谱+图神经网络", "DFSS/六西格玛方法论"],
         "analyst_name_label": "分析人姓名",
@@ -1298,7 +1298,7 @@ TEXTS = {
         "need_license": "⚠️ 请先购买授权码后再下载报告。",
     },
     "en": {
-        "title": "🔍 AI+DQA Product Risk Analysis",
+        "title": "🔍 AI+DQA Product Design Risk Analysis",
         "sidebar_title": "About",
         "basis_items": ["25+ years R&D", "AI big data", "Knowledge Graph+GNN", "DFSS/Six Sigma"],
         "analyst_name_label": "Analyst Name",
