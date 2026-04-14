@@ -88,9 +88,9 @@ except:
 
 # 套餐定义（次数，有效期月数）—— 已填入用户提供的 Price ID
 PLANS = {
-    "single": {"uses": 3, "months": 9999, "price_id": "price_1TLmO14PvqyeiHq5I1JiQUBe", "name_zh": "单次通行", "name_en": "Single Pass", "price_usd": 3},
-    "50": {"uses": 50, "months": 1, "price_id": "price_1TLgfP4PvqyeiHq5etIezp0y", "name_zh": "50次套餐", "name_en": "50 Credits", "price_usd": 30},
-    "1000": {"uses": 1000, "months": 12, "price_id": "price_1TLgfQ4PvqyeiHq5FzEr7r71", "name_zh": "1000次套餐", "name_en": "1000 Credits", "price_usd": 200},
+    "single": {"uses": 3, "months": 9999, "price_id": "price_1TLv104PvqyeiHq5XmfeElCQ", "name_zh": "单次通行", "name_en": "Single Pass", "price_usd": 3},
+    "50": {"uses": 50, "months": 1, "price_id": "price_1TLv2r4PvqyeiHq5w77h0KjN", "name_zh": "50次套餐", "name_en": "50 Credits", "price_usd": 30},
+    "1000": {"uses": 1000, "months": 12, "price_id": "price_1TLv3z4PvqyeiHq5Yd2pC2Jn", "name_zh": "1000次套餐", "name_en": "1000 Credits", "price_usd": 200},
 }
 
 # ================== 授权与试用数据管理 ==================
