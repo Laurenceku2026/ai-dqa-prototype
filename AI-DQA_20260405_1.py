@@ -8,7 +8,6 @@ import re
 import secrets
 import string
 import stripe
-import uuid
 from io import BytesIO
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -81,46 +80,18 @@ TRIAL_SECURITY_HTML = """
 <div class="trial-watermark-text">⚠️ 机密报告 · 请联系 Techlife2027@gmail.com 购买授权 ⚠️</div>
 """
 
-# ================== Stripe 配置（测试模式） ==================
+# ================== Stripe 配置 ==================
 try:
     stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
 except:
     stripe.api_key = ""
 
-# 套餐定义（次数，有效期月数）- 使用用户提供的测试模式 Price ID
+# 套餐定义（次数，有效期月数）—— 已填入用户提供的 Price ID
 PLANS = {
     "single": {"uses": 3, "months": 9999, "price_id": "price_1TLv104PvqyeiHq5XmfeElCQ", "name_zh": "单次通行", "name_en": "Single Pass", "price_usd": 3},
     "50": {"uses": 50, "months": 1, "price_id": "price_1TLv2r4PvqyeiHq5w77h0KjN", "name_zh": "50次套餐", "name_en": "50 Credits", "price_usd": 30},
     "1000": {"uses": 1000, "months": 12, "price_id": "price_1TLv3z4PvqyeiHq5Yd2pC2Jn", "name_zh": "1000次套餐", "name_en": "1000 Credits", "price_usd": 200},
 }
-
-# ================== 临时文件保存报告（用于支付后恢复） ==================
-def save_report_to_temp(product_name, product_desc, report_content, analyst_name, analyst_title):
-    report_id = str(uuid.uuid4())
-    data = {
-        "product_name": product_name,
-        "product_desc": product_desc,
-        "report_content": report_content,
-        "analyst_name": analyst_name,
-        "analyst_title": analyst_title
-    }
-    with open(f"temp_report_{report_id}.json", "w") as f:
-        json.dump(data, f)
-    return report_id
-
-def load_report_from_temp(report_id):
-    file_path = f"temp_report_{report_id}.json"
-    if os.path.exists(file_path):
-        with open(file_path, "r") as f:
-            data = json.load(f)
-        os.remove(file_path)  # 读取后删除临时文件
-        return data
-    return None
-
-def cleanup_temp_report(report_id):
-    file_path = f"temp_report_{report_id}.json"
-    if os.path.exists(file_path):
-        os.remove(file_path)
 
 # ================== 授权与试用数据管理 ==================
 USAGE_FILE = "usage_data.json"
@@ -261,8 +232,6 @@ if "show_payment_dialog" not in st.session_state:
     st.session_state.show_payment_dialog = False
 if "payment_new_key" not in st.session_state:
     st.session_state.payment_new_key = ""
-if "report_id" not in st.session_state:
-    st.session_state.report_id = ""
 
 ADMIN_USERNAME = "Laurence_ku"
 ADMIN_PASSWORD = "Ku_product$2026"
@@ -1200,9 +1169,7 @@ def create_checkout_session(plan_key):
     plan = PLANS[plan_key]
     price_id = plan["price_id"]
     base_url = st.secrets.get("APP_URL", "https://ai-app-design-dfmea.streamlit.app")
-    # 获取当前会话的 report_id（如果有）
-    report_id = st.session_state.get("report_id", "")
-    success_url = f"{base_url}?order_success=1&plan={plan_key}&report_id={report_id}"
+    success_url = f"{base_url}?order_success=1&plan={plan_key}"
     cancel_url = f"{base_url}"
     try:
         checkout_session = stripe.checkout.Session.create(
@@ -1215,7 +1182,6 @@ def create_checkout_session(plan_key):
             customer_creation="always",
         )
         st.success("支付链接已生成，请点击下方按钮完成支付" if st.session_state.lang=="zh" else "Payment link generated. Click below to pay.")
-        # 使用 target="_self" 在同一标签页跳转
         button_html = f'<a href="{checkout_session.url}" target="_blank" style="display: block; background-color: #E60000; color: white; font-weight: bold; font-size: 18px; padding: 12px; border-radius: 8px; text-align: center; text-decoration: none; width: 100%;">前往 Stripe 支付页面</a>'
         st.markdown(button_html, unsafe_allow_html=True)
     except Exception as e:
@@ -1226,18 +1192,6 @@ def handle_payment_callback():
     params = st.query_params
     if "order_success" in params and "plan" in params:
         plan_key = params["plan"]
-        report_id = params.get("report_id", "")
-        # 如果有 report_id，尝试恢复报告内容
-        if report_id:
-            report_data = load_report_from_temp(report_id)
-            if report_data:
-                st.session_state.report_content = report_data["report_content"]
-                st.session_state.last_product_name = report_data["product_name"]
-                st.session_state.last_product_desc = report_data["product_desc"]
-                st.session_state.analyst_name = report_data["analyst_name"]
-                st.session_state.analyst_title = report_data["analyst_title"]
-                st.session_state.report_id = report_id  # 保留以便后续清理
-        # 生成授权码
         if plan_key in PLANS:
             uses = PLANS[plan_key]["uses"]
             months = PLANS[plan_key]["months"]
@@ -1407,6 +1361,7 @@ with st.sidebar:
         if new_report_key:
             valid, remaining, expiry_str, _ = activate_license(new_report_key)
             if valid:
+                # 成功提示也使用多语言
                 if lang == "zh":
                     st.success(f"授权成功！剩余 {remaining} 次，有效期至 {expiry_str[:10]}")
                 else:
@@ -1468,14 +1423,6 @@ with col_center:
                 st.session_state.report_content = report_content
                 st.session_state.last_product_name = product_name
                 st.session_state.last_product_desc = product_desc
-                st.session_state.analyst_name = st.session_state.get("analyst_name", "")
-                st.session_state.analyst_title = st.session_state.get("analyst_title", "")
-                # 保存到临时文件，用于支付后恢复
-                report_id = save_report_to_temp(
-                    product_name, product_desc, report_content,
-                    st.session_state.analyst_name, st.session_state.analyst_title
-                )
-                st.session_state.report_id = report_id
                 st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1523,13 +1470,9 @@ if st.session_state.report_content:
                     key="real_download"
                 )
     if st.button("← 返回重新填写"):
-        # 删除临时文件
-        if st.session_state.get("report_id"):
-            cleanup_temp_report(st.session_state.report_id)
         st.session_state.report_content = None
         st.session_state.last_product_name = ""
         st.session_state.last_product_desc = ""
-        st.session_state.report_id = ""
         st.rerun()
 
 st.markdown("---")
