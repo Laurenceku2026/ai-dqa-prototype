@@ -1216,7 +1216,7 @@ def create_checkout_session(plan_key):
         )
         st.success("支付链接已生成，请点击下方按钮完成支付" if st.session_state.lang=="zh" else "Payment link generated. Click below to pay.")
         # 使用 target="_self" 在同一标签页跳转
-        button_html = f'<a href="{checkout_session.url}" target="_self" style="display: block; background-color: #E60000; color: white; font-weight: bold; font-size: 18px; padding: 12px; border-radius: 8px; text-align: center; text-decoration: none; width: 100%;">前往 Stripe 支付页面</a>'
+        button_html = f'<a href="{checkout_session.url}" target="_blank" style="display: block; background-color: #E60000; color: white; font-weight: bold; font-size: 18px; padding: 12px; border-radius: 8px; text-align: center; text-decoration: none; width: 100%;">前往 Stripe 支付页面</a>'
         st.markdown(button_html, unsafe_allow_html=True)
     except Exception as e:
         st.error(f"创建支付会话失败: {e}" if st.session_state.lang=="zh" else f"Failed to create checkout session: {e}")
