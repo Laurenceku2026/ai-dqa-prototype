@@ -22,12 +22,11 @@ from docx.oxml.ns import qn
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
 
-# ================== 自定义 CSS（突出购买按钮） ==================
+# ================== 自定义 CSS（强制侧边栏购买按钮样式） ==================
 st.markdown("""
 <style>
-    /* 侧边栏购买按钮：大红色、加粗、更大尺寸 */
-    div[data-testid="stSidebar"] .stButton > button:has(span:contains("购买授权码")),
-    div[data-testid="stSidebar"] .stButton > button:has(span:contains("Purchase License")) {
+    /* 侧边栏所有按钮的基础样式（确保覆盖） */
+    section[data-testid="stSidebar"] .stButton button {
         background-color: #E60000 !important;
         color: white !important;
         font-size: 20px !important;
@@ -39,10 +38,39 @@ st.markdown("""
         box-shadow: 0 2px 6px rgba(0,0,0,0.2) !important;
         transition: all 0.2s ease !important;
     }
-    div[data-testid="stSidebar"] .stButton > button:has(span:contains("购买授权码")):hover,
-    div[data-testid="stSidebar"] .stButton > button:has(span:contains("Purchase License")):hover {
+    section[data-testid="stSidebar"] .stButton button:hover {
         background-color: #B30000 !important;
         transform: scale(1.02) !important;
+    }
+    /* 主分析按钮保持原样 */
+    .main-analyze button {
+        background-color: #ff4b4b !important;
+        font-size: 36px !important;
+        padding: 20px 60px !important;
+        box-shadow: 0 8px 16px rgba(0,0,0,0.2) !important;
+    }
+    /* 全局容器宽度 */
+    .block-container {
+        max-width: 100% !important;
+        width: 100% !important;
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+    }
+    .report-card {
+        width: 100% !important;
+        background-color: #f8f9fa;
+        padding: 1.5rem;
+        border-radius: 12px;
+        margin: 1rem 0;
+    }
+    .report-card table {
+        width: 100% !important;
+        border-collapse: collapse;
+    }
+    .report-card th, .report-card td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -106,7 +134,7 @@ TRIAL_SECURITY_HTML = """
 <div class="trial-watermark-text">⚠️ 机密报告 · 请联系 Techlife2027@gmail.com 购买授权 ⚠️</div>
 """
 
-# ================== Stripe 配置（测试模式） ==================
+# ================== Stripe 配置 ==================
 try:
     stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
 except:
@@ -292,7 +320,7 @@ if "report_id" not in st.session_state:
 ADMIN_USERNAME = "Laurence_ku"
 ADMIN_PASSWORD = "Ku_product$2026"
 
-# ================== 数据库部分（完整实现） ==================
+# ================== 数据库抽象接口 ==================
 class RiskDatabase:
     def get_risks(self, product_type: str) -> List[Dict]:
         raise NotImplementedError
@@ -315,6 +343,7 @@ class RiskDatabase:
     def search_knowledge(self, keywords: str, limit: int = 5) -> List[str]:
         raise NotImplementedError
 
+# ================== SQLite 实现（完整） ==================
 class SQLiteDatabase(RiskDatabase):
     def __init__(self):
         self.conn = sqlite3.connect('app_data.db', check_same_thread=False)
@@ -496,6 +525,7 @@ class SQLiteDatabase(RiskDatabase):
         self.conn.commit()
         self.load_caches()
 
+# ================== Neo4j 实现（完整） ==================
 class Neo4jDatabase(RiskDatabase):
     def __init__(self):
         self.driver = None
@@ -664,6 +694,7 @@ class Neo4jDatabase(RiskDatabase):
     def load_initial_data(self):
         pass
 
+# ================== 混合数据库 ==================
 class HybridDatabase(RiskDatabase):
     def __init__(self):
         self.sqlite = SQLiteDatabase()
@@ -739,7 +770,7 @@ class HybridDatabase(RiskDatabase):
 def get_database() -> RiskDatabase:
     return HybridDatabase()
 
-# ================== AI 相关函数 ==================
+# ================== DeepSeek 客户端 ==================
 def get_openai_client():
     api_key = st.session_state.temp_api_key if st.session_state.temp_api_key else st.secrets.get("DEEPSEEK_API_KEY", "")
     base_url = st.session_state.temp_base_url if st.session_state.temp_base_url else st.secrets.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
@@ -780,6 +811,7 @@ def translate_text(text: str, target_lang: str) -> str:
     st.session_state.translation_cache[cache_key] = translated
     return translated
 
+# ================== 联网搜索 ==================
 def web_search(query: str, max_results=3) -> str:
     try:
         with DDGS() as ddgs:
@@ -793,6 +825,7 @@ def web_search(query: str, max_results=3) -> str:
     except Exception as e:
         return f"搜索失败: {str(e)}"
 
+# ================== 清理 AI 响应 ==================
 def clean_ai_response(text: str, lang: str = "zh") -> str:
     if lang == "en":
         patterns = [r'^Okay[,.]?\s*\n', r'^As a senior reliability engineer.*?\n', r'^Based on the above information.*?\n', r'^Here is the risk analysis report.*?\n']
@@ -809,6 +842,7 @@ def clean_ai_response(text: str, lang: str = "zh") -> str:
             text = '\n'.join(lines[1:])
     return text.strip()
 
+# ================== Markdown 转 Word ==================
 def clean_markdown_text(text: str) -> str:
     text = re.sub(r'\*\*', '', text)
     text = re.sub(r'<br\s*/?>', '\n', text)
@@ -1238,8 +1272,10 @@ def create_checkout_session(plan_key):
             cancel_url=cancel_url,
             customer_creation="always",
         )
+        # 根据语言显示不同的按钮文字
+        button_text = "前往 Stripe 支付页面" if st.session_state.lang == "zh" else "Go to Stripe Payment Page"
         st.success("支付链接已生成，请点击下方按钮完成支付" if st.session_state.lang=="zh" else "Payment link generated. Click below to pay.")
-        button_html = f'<a href="{checkout_session.url}" target="_blank" style="display: block; background-color: #E60000; color: white; font-weight: bold; font-size: 18px; padding: 12px; border-radius: 8px; text-align: center; text-decoration: none; width: 100%;">前往 Stripe 支付页面</a>'
+        button_html = f'<a href="{checkout_session.url}" target="_blank" style="display: block; background-color: #E60000; color: white; font-weight: bold; font-size: 18px; padding: 12px; border-radius: 8px; text-align: center; text-decoration: none; width: 100%;">{button_text}</a>'
         st.markdown(button_html, unsafe_allow_html=True)
     except Exception as e:
         st.error(f"创建支付会话失败: {e}" if st.session_state.lang=="zh" else f"Failed to create checkout session: {e}")
@@ -1449,7 +1485,7 @@ with st.sidebar:
         st.warning(t["trial_warning"].format(st.session_state.trial_uses_left))
     st.markdown("---")
     
-    # 购买按钮（已通过CSS突出显示）
+    # 购买按钮（样式已由全局 CSS 强制覆盖）
     if st.button(t["purchase_button"], use_container_width=True):
         purchase_dialog()
     st.markdown("---")
@@ -1491,7 +1527,6 @@ with col_center:
                 st.session_state.last_product_desc = product_desc
                 st.session_state.analyst_name = st.session_state.get("analyst_name", "")
                 st.session_state.analyst_title = st.session_state.get("analyst_title", "")
-                # 保存到临时文件，用于支付后恢复
                 report_id = save_report_to_temp(
                     product_name, product_desc, report_content,
                     st.session_state.analyst_name, st.session_state.analyst_title
