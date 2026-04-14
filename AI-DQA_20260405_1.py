@@ -8,6 +8,7 @@ import re
 import secrets
 import string
 import stripe
+import uuid
 from io import BytesIO
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -20,6 +21,31 @@ from docx.oxml.ns import qn
 
 # ================== 页面配置 ==================
 st.set_page_config(page_title="AI+DQA 风险分析系统", page_icon="🔍", layout="wide")
+
+# ================== 自定义 CSS（突出购买按钮） ==================
+st.markdown("""
+<style>
+    /* 侧边栏购买按钮：大红色、加粗、更大尺寸 */
+    div[data-testid="stSidebar"] .stButton > button:has(span:contains("购买授权码")),
+    div[data-testid="stSidebar"] .stButton > button:has(span:contains("Purchase License")) {
+        background-color: #E60000 !important;
+        color: white !important;
+        font-size: 20px !important;
+        font-weight: bold !important;
+        padding: 0.75rem 1rem !important;
+        width: 100% !important;
+        border-radius: 12px !important;
+        border: none !important;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.2) !important;
+        transition: all 0.2s ease !important;
+    }
+    div[data-testid="stSidebar"] .stButton > button:has(span:contains("购买授权码")):hover,
+    div[data-testid="stSidebar"] .stButton > button:has(span:contains("Purchase License")):hover {
+        background-color: #B30000 !important;
+        transform: scale(1.02) !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # ================== 试用模式的安全防护代码（CSS + JS）水印加大版 ==================
 TRIAL_SECURITY_HTML = """
@@ -80,18 +106,46 @@ TRIAL_SECURITY_HTML = """
 <div class="trial-watermark-text">⚠️ 机密报告 · 请联系 Techlife2027@gmail.com 购买授权 ⚠️</div>
 """
 
-# ================== Stripe 配置 ==================
+# ================== Stripe 配置（测试模式） ==================
 try:
     stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
 except:
     stripe.api_key = ""
 
-# 套餐定义（次数，有效期月数）—— 已填入用户提供的 Price ID
+# 套餐定义（次数，有效期月数）- 使用用户提供的测试模式 Price ID
 PLANS = {
     "single": {"uses": 3, "months": 9999, "price_id": "price_1TLv104PvqyeiHq5XmfeElCQ", "name_zh": "单次通行", "name_en": "Single Pass", "price_usd": 3},
     "50": {"uses": 50, "months": 1, "price_id": "price_1TLv2r4PvqyeiHq5w77h0KjN", "name_zh": "50次套餐", "name_en": "50 Credits", "price_usd": 30},
     "1000": {"uses": 1000, "months": 12, "price_id": "price_1TLv3z4PvqyeiHq5Yd2pC2Jn", "name_zh": "1000次套餐", "name_en": "1000 Credits", "price_usd": 200},
 }
+
+# ================== 临时文件保存报告（用于支付后恢复） ==================
+def save_report_to_temp(product_name, product_desc, report_content, analyst_name, analyst_title):
+    report_id = str(uuid.uuid4())
+    data = {
+        "product_name": product_name,
+        "product_desc": product_desc,
+        "report_content": report_content,
+        "analyst_name": analyst_name,
+        "analyst_title": analyst_title
+    }
+    with open(f"temp_report_{report_id}.json", "w") as f:
+        json.dump(data, f)
+    return report_id
+
+def load_report_from_temp(report_id):
+    file_path = f"temp_report_{report_id}.json"
+    if os.path.exists(file_path):
+        with open(file_path, "r") as f:
+            data = json.load(f)
+        os.remove(file_path)
+        return data
+    return None
+
+def cleanup_temp_report(report_id):
+    file_path = f"temp_report_{report_id}.json"
+    if os.path.exists(file_path):
+        os.remove(file_path)
 
 # ================== 授权与试用数据管理 ==================
 USAGE_FILE = "usage_data.json"
@@ -232,6 +286,8 @@ if "show_payment_dialog" not in st.session_state:
     st.session_state.show_payment_dialog = False
 if "payment_new_key" not in st.session_state:
     st.session_state.payment_new_key = ""
+if "report_id" not in st.session_state:
+    st.session_state.report_id = ""
 
 ADMIN_USERNAME = "Laurence_ku"
 ADMIN_PASSWORD = "Ku_product$2026"
@@ -1121,8 +1177,8 @@ def admin_settings_dialog():
         st.session_state.temp_model = new_model
         st.rerun()
 
-# ================== 购买对话框 ==================
-@st.dialog("购买+解锁", width="large")
+# ================== 购买对话框（完全双语） ==================
+@st.dialog("购买+解锁" if st.session_state.lang=="zh" else "Purchase + Unlock", width="large")
 def purchase_dialog():
     lang = st.session_state.lang
     if lang == "zh":
@@ -1143,7 +1199,7 @@ def purchase_dialog():
 | 50 Credits | 180 RMB / $30 | 50 uses | 1 month |
 | 1000 Credits | 1200 RMB / $200 | 1000 uses | 12 months |
 """)
-    st.markdown("#### 💳 银行卡/数字钱包支付（Stripe）" if lang=="zh" else "#### 💳 Card / Digital Wallet Payment (Stripe)")
+    st.markdown("#### 💳 " + ("银行卡/数字钱包支付（Stripe）" if lang=="zh" else "Card / Digital Wallet Payment (Stripe)"))
     
     if not stripe.api_key:
         st.error("Stripe 未配置，请联系管理员。" if lang=="zh" else "Stripe not configured. Please contact admin.")
@@ -1161,7 +1217,7 @@ def purchase_dialog():
         if st.button("🚀 " + (PLANS["1000"]["name_zh"] if lang=="zh" else PLANS["1000"]["name_en"]) + f"\n${PLANS['1000']['price_usd']}", use_container_width=True):
             create_checkout_session("1000")
     
-    st.markdown("#### 🇨🇳 国内支付（微信 / 支付宝）" if lang=="zh" else "#### 🇨🇳 Domestic Payment (WeChat Pay / Alipay)")
+    st.markdown("#### 🇨🇳 " + ("国内支付（微信 / 支付宝）" if lang=="zh" else "Domestic Payment (WeChat Pay / Alipay)"))
     st.info("支持信用卡、微信支付和支付宝。" if lang=="zh" else "Supports credit cards, WeChat Pay and Alipay.")
     st.markdown("支付成功后会自动跳回本页面，授权码将自动激活。" if lang=="zh" else "You will be redirected back after payment, and the license key will be auto-activated.")
 
@@ -1169,7 +1225,8 @@ def create_checkout_session(plan_key):
     plan = PLANS[plan_key]
     price_id = plan["price_id"]
     base_url = st.secrets.get("APP_URL", "https://ai-app-design-dfmea.streamlit.app")
-    success_url = f"{base_url}?order_success=1&plan={plan_key}"
+    report_id = st.session_state.get("report_id", "")
+    success_url = f"{base_url}?order_success=1&plan={plan_key}&report_id={report_id}"
     cancel_url = f"{base_url}"
     try:
         checkout_session = stripe.checkout.Session.create(
@@ -1192,6 +1249,16 @@ def handle_payment_callback():
     params = st.query_params
     if "order_success" in params and "plan" in params:
         plan_key = params["plan"]
+        report_id = params.get("report_id", "")
+        if report_id:
+            report_data = load_report_from_temp(report_id)
+            if report_data:
+                st.session_state.report_content = report_data["report_content"]
+                st.session_state.last_product_name = report_data["product_name"]
+                st.session_state.last_product_desc = report_data["product_desc"]
+                st.session_state.analyst_name = report_data["analyst_name"]
+                st.session_state.analyst_title = report_data["analyst_title"]
+                st.session_state.report_id = report_id
         if plan_key in PLANS:
             uses = PLANS[plan_key]["uses"]
             months = PLANS[plan_key]["months"]
@@ -1212,7 +1279,7 @@ def handle_payment_callback():
 # ================== 支付成功弹窗 ==================
 def show_payment_success_dialog():
     if st.session_state.get("show_payment_dialog", False):
-        @st.dialog("✅ 支付成功")
+        @st.dialog("✅ 支付成功" if st.session_state.lang=="zh" else "✅ Payment Successful")
         def payment_success_dialog():
             lang = st.session_state.lang
             st.markdown("### 您的授权码已生成" if lang=="zh" else "### Your license key has been generated")
@@ -1361,7 +1428,6 @@ with st.sidebar:
         if new_report_key:
             valid, remaining, expiry_str, _ = activate_license(new_report_key)
             if valid:
-                # 成功提示也使用多语言
                 if lang == "zh":
                     st.success(f"授权成功！剩余 {remaining} 次，有效期至 {expiry_str[:10]}")
                 else:
@@ -1383,7 +1449,7 @@ with st.sidebar:
         st.warning(t["trial_warning"].format(st.session_state.trial_uses_left))
     st.markdown("---")
     
-    # 购买按钮
+    # 购买按钮（已通过CSS突出显示）
     if st.button(t["purchase_button"], use_container_width=True):
         purchase_dialog()
     st.markdown("---")
@@ -1423,6 +1489,14 @@ with col_center:
                 st.session_state.report_content = report_content
                 st.session_state.last_product_name = product_name
                 st.session_state.last_product_desc = product_desc
+                st.session_state.analyst_name = st.session_state.get("analyst_name", "")
+                st.session_state.analyst_title = st.session_state.get("analyst_title", "")
+                # 保存到临时文件，用于支付后恢复
+                report_id = save_report_to_temp(
+                    product_name, product_desc, report_content,
+                    st.session_state.analyst_name, st.session_state.analyst_title
+                )
+                st.session_state.report_id = report_id
                 st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1470,9 +1544,12 @@ if st.session_state.report_content:
                     key="real_download"
                 )
     if st.button("← 返回重新填写"):
+        if st.session_state.get("report_id"):
+            cleanup_temp_report(st.session_state.report_id)
         st.session_state.report_content = None
         st.session_state.last_product_name = ""
         st.session_state.last_product_desc = ""
+        st.session_state.report_id = ""
         st.rerun()
 
 st.markdown("---")
