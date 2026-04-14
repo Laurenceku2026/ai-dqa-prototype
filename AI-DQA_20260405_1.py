@@ -140,7 +140,7 @@ TRIAL_SECURITY_HTML = """
 # 1000次套餐：https://ai-app-design-dfmea.streamlit.app/?payment_success=1&plan=1000
 PAYMENT_LINKS = {
     "single": {
-        "url": "https://buy.stripe.com/dRm28kgzD48EeGxcsk0RG00",  # 请替换为您的实际 Payment Link（已配置重定向）
+        "url": "https://buy.stripe.com/test_dRm28kgzD48EeGxcsk0RG00",  # 请替换为您的实际 Payment Link（已配置重定向）
         "name_zh": "单次通行",
         "name_en": "Single Pass",
         "price_usd": 3,
@@ -148,7 +148,7 @@ PAYMENT_LINKS = {
         "months": 9999
     },
     "50": {
-        "url": "https://buy.stripe.com/7sY28kfvz6gM55Xcsk0RG01",  # 请替换为您的实际 Payment Link（已配置重定向）
+        "url": "https://buy.stripe.com/test_7sY28kfvz6gM55Xcsk0RG01",  # 请替换为您的实际 Payment Link（已配置重定向）
         "name_zh": "50次套餐",
         "name_en": "50 Credits",
         "price_usd": 30,
@@ -156,7 +156,7 @@ PAYMENT_LINKS = {
         "months": 1
     },
     "1000": {
-        "url": "https://buy.stripe.com/fZu00cabfdJeaqhcsk0RG02",  # 请替换为您的实际 Payment Link（已配置重定向）
+        "url": "https://buy.stripe.com/test_fZu00cabfdJeaqhcsk0RG02",  # 请替换为您的实际 Payment Link（已配置重定向）
         "name_zh": "1000次套餐",
         "name_en": "1000 Credits",
         "price_usd": 200,
