@@ -1183,7 +1183,6 @@ def handle_payment_callback():
     # 第二步：处理支付成功
     if "payment_success" in params and "plan" in params:
         plan_key = params["plan"]
-        # 定义套餐参数（与购买对话框中的套餐对应）
         if plan_key == "single":
             uses = 3
             months = 9999
@@ -1232,10 +1231,11 @@ def show_payment_success_dialog():
                 st.rerun()
         payment_success_dialog()
 
-# ================== 购买对话框（使用 Stripe Checkout Session） ==================
-@st.dialog("购买+解锁", width="large")  # 标题固定，内容动态
+# ================== 购买对话框（使用 Stripe Checkout Session，动态标题） ==================
+@st.dialog(" ", width="large")  # 空格占位符
 def purchase_dialog():
     lang = st.session_state.lang
+    st.markdown(f"### {t('purchase_dialog_title')}")
     base_url = "https://ai-app-design-dfmea.streamlit.app"
     if lang == "zh":
         st.markdown("### 选择套餐")
@@ -1390,6 +1390,7 @@ TEXTS = {
         "purchase_button": "💰 购买授权码",
         "download_btn": "📥 下载 Word 报告",
         "need_license": "⚠️ 请先购买授权码后再下载报告。",
+        "purchase_dialog_title": "购买授权码",
     },
     "en": {
         "title": "🔍 AI+DQA Product Design Risk Analysis",
@@ -1423,6 +1424,7 @@ TEXTS = {
         "purchase_button": "💰 Purchase License",
         "download_btn": "📥 Download Word Report",
         "need_license": "⚠️ Please purchase a license before downloading.",
+        "purchase_dialog_title": "Purchase License",
     }
 }
 
