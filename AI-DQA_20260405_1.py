@@ -1235,7 +1235,11 @@ def show_payment_success_dialog():
 @st.dialog(" ", width="large")  # 空格占位符
 def purchase_dialog():
     lang = st.session_state.lang
-    st.markdown(f"### {t('purchase_dialog_title')}")
+    # 直接根据语言设置标题，避免依赖 t 函数可能的问题
+    if lang == "zh":
+        st.markdown("### 购买授权码")
+    else:
+        st.markdown("### Purchase License")
     base_url = "https://ai-app-design-dfmea.streamlit.app"
     if lang == "zh":
         st.markdown("### 选择套餐")
