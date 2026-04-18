@@ -1231,11 +1231,11 @@ def show_payment_success_dialog():
                 st.rerun()
         payment_success_dialog()
 
-# ================== 购买对话框（使用 Stripe Checkout Session，动态标题） ==================
+# ================== 购买对话框（使用 Stripe Checkout Session，添加 metadata 区分应用） ==================
 @st.dialog(" ", width="large")  # 空格占位符
 def purchase_dialog():
     lang = st.session_state.lang
-    # 直接根据语言设置标题，避免依赖 t 函数可能的问题
+    # 直接根据语言设置标题
     if lang == "zh":
         st.markdown("### 购买授权码")
     else:
@@ -1284,6 +1284,11 @@ def purchase_dialog():
                     mode="payment",
                     success_url=f"{base_url}/?payment_success=1&plan=single&lang={lang}",
                     cancel_url=f"{base_url}/",
+                    metadata={
+                        "app_name": "AI-DQA",
+                        "app_version": "1.0",
+                        "plan": "single"
+                    }
                 )
                 st.success("✅ " + ("支付链接已生成，请点击下方按钮完成支付" if lang=="zh" else "Payment link generated. Click below to pay."))
                 button_html = f'<a href="{checkout_session.url}" target="_blank" style="display: block; background-color: #E60000; color: white; font-weight: bold; font-size: 18px; padding: 12px; border-radius: 8px; text-align: center; text-decoration: none; width: 100%;">{"前往 Stripe 支付页面" if lang=="zh" else "Go to Stripe Payment Page"}</a>'
@@ -1308,6 +1313,11 @@ def purchase_dialog():
                     mode="payment",
                     success_url=f"{base_url}/?payment_success=1&plan=50&lang={lang}",
                     cancel_url=f"{base_url}/",
+                    metadata={
+                        "app_name": "AI-DQA",
+                        "app_version": "1.0",
+                        "plan": "50"
+                    }
                 )
                 st.success("✅ " + ("支付链接已生成，请点击下方按钮完成支付" if lang=="zh" else "Payment link generated. Click below to pay."))
                 button_html = f'<a href="{checkout_session.url}" target="_blank" style="display: block; background-color: #E60000; color: white; font-weight: bold; font-size: 18px; padding: 12px; border-radius: 8px; text-align: center; text-decoration: none; width: 100%;">{"前往 Stripe 支付页面" if lang=="zh" else "Go to Stripe Payment Page"}</a>'
@@ -1332,6 +1342,11 @@ def purchase_dialog():
                     mode="payment",
                     success_url=f"{base_url}/?payment_success=1&plan=1000&lang={lang}",
                     cancel_url=f"{base_url}/",
+                    metadata={
+                        "app_name": "AI-DQA",
+                        "app_version": "1.0",
+                        "plan": "1000"
+                    }
                 )
                 st.success("✅ " + ("支付链接已生成，请点击下方按钮完成支付" if lang=="zh" else "Payment link generated. Click below to pay."))
                 button_html = f'<a href="{checkout_session.url}" target="_blank" style="display: block; background-color: #E60000; color: white; font-weight: bold; font-size: 18px; padding: 12px; border-radius: 8px; text-align: center; text-decoration: none; width: 100%;">{"前往 Stripe 支付页面" if lang=="zh" else "Go to Stripe Payment Page"}</a>'
