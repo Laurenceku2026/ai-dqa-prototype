@@ -1,4 +1,38 @@
 import streamlit as st
+
+st.set_page_config(page_title="工具已迁移 | Tool Migrated", page_icon="🚀")
+
+st.title("📢 工具已迁移 / Tool Migrated")
+
+st.markdown("""
+### 🇨🇳 中文
+此工具已整合至 **TechLife 门户**，请点击下方链接访问新版工具。
+
+👉 [**打开 TechLife 门户**](https://techlife-app.streamlit.app/)
+
+---
+
+### 🇬🇧 English
+This tool has been integrated into the **TechLife Portal**. Please click the link below to access the new version.
+
+👉 [**Open TechLife Portal**](https://techlife-app.streamlit.app/)
+
+---
+
+*您将不会自动跳转，请手动点击上方链接。*  
+*You will not be automatically redirected. Please click the link above manually.*
+""")
+
+# 中英文双语按钮
+col1, col2 = st.columns(2)
+with col1:
+    st.link_button("🚀 前往 TechLife 门户 (中文)", "https://techlife-app.streamlit.app/", use_container_width=True)
+with col2:
+    st.link_button("🚀 Go to TechLife Portal (English)", "https://techlife-app.streamlit.app/", use_container_width=True)
+
+st.stop()
+
+import streamlit as st
 import pandas as pd
 import json
 import os
